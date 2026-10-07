@@ -1,0 +1,202 @@
+# Migrating ngai-platform to a Jac codebase
+
+Date: 2026-10-07. Base: `main` @ 63d0ef3. Branch: `jac/codebase-migration`.
+
+Status: **draft for review** — strategy proposal, no code yet. The open
+decisions in the last section need a call before phase 0 starts.
+
+## Origin
+
+The working agreement (AGENTS.md §3–4) mandates Jac's Object-Spatial
+Programming wherever natural and an upstream-first bug-fix workflow. This
+plan makes the codebase match that mandate: move all backend business logic
+to Jac, keep the pieces Jac genuinely cannot carry, and use every jac/jaseci
+defect hit along the way to drive fixes upstream (`jaseci-labs/jac`).
+
+## Where we are (measured, not assumed)
+
+| Fact | Evidence |
+| --- | --- |
+| Pure TypeScript fork of OpenMausBot v0.1.98 | `package.json` (`openmausbot` 0.1.98); zero `.jac`, zero `.py` files in repo |
+| No jac/jaseci submodule or patch exists yet | no `.gitmodules`, no `.git/modules` |
+| The server is one monolith | `server/index.ts`: 25,542 lines / 1.3MB, raw `node:http` + zod + SSE fanout; ~670 support files; test twin `server/index.test.ts` 665KB |
+| Engine drivers are the bulk of parsing surface | `server/drivers/` ~93 entries (`claude.ts` 134.7KB, `codex.ts` 96.1KB, `pi.ts` 58.6KB, …) behind the SPI in `server/contracts.ts` |
+| Persistence is SQLite via `node:sqlite` | `server/message-db.ts` (`DatabaseSync`, 892 lines), `server/checkpoints.ts`; state dir `~/.openmausbot` with a process lease (`acquireDataDirLeaseForProcess`) |
+| Dev runtime is Node 24 + strip-types, no framework | `package.json` scripts; Dockerfile: node:24-bookworm-slim, **no Python anywhere** |
+| Client and desktop shells cannot migrate | `src/` React 19 (~775 files), `electron/` (.mjs/.cjs, `main.mjs` 175KB), `cloudflare/` Workers, `apps/docs` Next.js |
+
+## What "fully Jac" means here
+
+Jac compiles to Python; there is no production browser/Electron story. So
+"fully Jac" is defined as: **every backend process that owns business logic,
+state, or transports is Jac**; UI shells and platforms without a Python
+runtime stay as they are, talking the same wire contract.
+
+| Component | Target | Rationale |
+| --- | --- | --- |
+| `server/` harness (routes, SSE, drivers, broker, computers, connectors, routines, memory, webhooks, backups, TTS) | **Jac** | The actual product logic; OSP fits (see model below) |
+| `companion/` relay (~40 files) | **Jac** (phase 5) | Small; same stack, same wire |
+| `enterprise/` server (6 files) | **Jac** (phase 5, with server) | License routes touch the same store |
+| `shared/` wire contracts | **Stays zod/TS as source of truth** (see contract section) | Single source of truth for both sides |
+| `src/` React client | Stays | No Jac UI story; talks wire contract only |
+| `electron/` shells | Stays JS; spawns the Jac harness binary instead of importing TS server code | Electron main is JS by design; only the embedded harness changes |
+| `cloudflare/` Workers, `apps/docs`, `evals/`, `scripts/` | Stay TS | Workers have no Python runtime; docs/evals talk the wire contract; evals become the parity harness |
+
+## Target architecture
+
+Same two-process local-first shape as today; the harness process changes
+implementation, not contract:
+
+```mermaid
+flowchart LR
+  UI[React client] --> R{router}
+  EM[Electron main.mjs] --> R
+  R -->|unmigrated routes + topics| TS[node harness, shrinking]
+  R -->|migrated routes + topics| J[jac harness, growing]
+  TS --> DB[(~/.openmausbot SQLite + files)]
+  J --> DB
+  J -->|spawn + parse| CLI[claude / codex / grok … CLIs]
+```
+
+**Seam rules** (what makes two harness processes safe):
+
+1. **Subsystems move whole**: routes + their SSE event topics + their tables
+   move together. Never two writers to one table; never one topic owned by
+   both processes.
+2. **One SQLite schema**, defined today by `server/message-db.ts` and friends.
+   Jac opens the same file with stdlib `sqlite3`. Table ownership migrates
+   with the owning subsystem; until then node keeps writing it.
+3. **The router splits** by route prefix and SSE topic. In deploy this is the
+   existing Caddy layer; in dev a tiny split router; in Electron,
+   `main.mjs` picks which process gets which port.
+4. **The wire contract never forks.** Both processes validate against the
+   same emitted JSON Schema (see below). A request served by either process
+   must be indistinguishable to the client apart from subsystem coverage.
+
+### The OSP model (why this is worth doing)
+
+The domain is already a graph; today it is loops over arrays in a 25k-line
+file. In Jac:
+
+- **Nodes**: `Bot`, `Thread`, `Message`, `TurnEvent`, `Computer`, `Connection`
+  (Composio/MCP), `Routine`, `Permission`, `WorkspaceSnapshot`.
+- **Edges**: bot↔thread membership, thread↔message ordering, bot↔computer
+  attachment, connection↔bot grants, routine↔bot schedule.
+- **Walkers/abilities**: turn ingestion (SSE event → `TurnEvent` nodes →
+  persistence → fanout), driver dispatch (`SpawnDriver` walking a `Turn`),
+  permission broker decisions, routine scheduling ticks, backup sweeps.
+
+## Workstream 0 — toolchain and runtime spike (prerequisite)
+
+Everything below assumes a long-lived Jac process can do what `index.ts`
+does. That is unproven. Phase 0:
+
+1. Check out `jac`/`jaseci` as the submodule the working agreement already
+   references (none exists yet) and pin it.
+2. Scratch app (not in `server/`): a Jac process that (a) serves HTTP with
+   SSE fanout to multiple clients, (b) spawns `claude -p` and streams its
+   stdout into per-client SSE topics, (c) holds SQLite state across
+   restarts, (d) survives a client disconnect mid-stream. Concurrency model
+   (async/threading), deployment story (`jac serve` vs embedded), and
+   packaging story all get written down.
+3. Every defect hit → upstream per AGENTS.md §3: minimal repro, fix branch
+   off upstream main, regression test, PR against `jaseci-labs/jac`,
+   tracked in the defect table below, local work continues on the locally
+   patched runtime.
+4. Exit: findings written to `docs/plans/2026-10-07-jac-runtime-spike.md`;
+   go/no-go on phases 1–5; list of upstream PRs open.
+
+**If the spike fails on a fixable upstream gap, the gap becomes the next
+workstream** — rule 3 exists for exactly this; we do not route around it.
+
+## Migration order
+
+Ordered by (OSP payoff × verifiability) ÷ blast radius. Each phase ends with
+the migrated subsystem's routes/topics/tables served by Jac and the node
+implementation deleted — a phase that leaves both implementations live is
+not done.
+
+| Phase | Subsystem | Why here | Parity evidence |
+| --- | --- | --- | --- |
+| 0 | Runtime spike | Prerequisite | Spike findings + upstream PRs |
+| 1 | OSP data layer: threads, messages, memory as graph | Immediate OSP payoff; same SQLite files; read/write parity checkable without touching live transport | conformance run: Jac reads/writes DB rows byte-identical to node on a recorded corpus; `server/message-db.ts` tests ported |
+| 2 | Routines | Small, scheduled, isolated; first live traffic through Jac behind the router | `scripts/verify-routines.ts` green against the Jac route |
+| 3 | Driver harness + bus/SSE (claude + openai-chat first, then the rest) | The heart; hardest; `evals/golden` byte-exact suites are the parity harness | golden suites byte-exact through Jac drivers; SSE topic cutover; permission broker cases ported |
+| 4 | Computers, connectors/MCP, webhooks, workspace backups, TTS/voice | Long tail; each moves with its tables and verify script | matching `scripts/verify-*.ts` green against Jac |
+| 5 | `companion/`, `enterprise/`, delete node harness | Everything else speaks the contract already | `scripts/verify-server-connection.mjs`, smoke suites green; `server/index.ts` deleted |
+
+Sequencing note: phases 1–2 are deliberately unglamorous. They prove the
+graph model and the router seam on low-risk traffic before phase 3 bets the
+core turn pipeline on the runtime.
+
+## Wire contract
+
+- `shared/` zod schemas remain the **single source of truth**. Emit JSON
+  Schema from them (`zod-to-json-schema`); the Jac side validates payloads
+  against the emitted schemas in CI.
+- A conformance job runs both processes against the same recorded
+  request/event corpus and diffs responses and SSE topic output. This job is
+  the migration's safety net and stays until phase 5 deletes one process.
+- Revisit "Jac models as source → generate TS" only if/when jaclang grows
+  codegen; not a dependency of this plan.
+
+## Packaging and CI impact
+
+- **Dockerfile**: gains a python stage shipping the jac wheel + harness;
+  runtime image grows accordingly. Caddy/router split logic lands in
+  `deploy/` during phase 1.
+- **Electron**: bundles a frozen CPython + jac runtime (onedir) instead of
+  the esbuild-bundled TS server; `electron-builder.yml`, `after-pack.mjs`,
+  and the win/linux packaging workflows change. This is the largest
+  packaging risk — spike it in phase 0 (size delta, AV/notarization,
+  cross-platform matrix).
+- **CI**: `ci.yml` shards gain a Jac job (jac tests + conformance suite);
+  existing Vitest suites keep gating unchanged behavior until their
+  subsystem's implementation is deleted, then the obsolete tests are
+  deleted with it.
+- Dev loop: pnpm scripts grow jac counterparts (`pnpm jac-server`); Node 24
+  strip-types stays for the shrinking half.
+
+## Risks
+
+| Risk | Mitigation |
+| --- | --- |
+| jaclang runtime gaps (SSE, subprocess streaming, long-lived process) | Phase 0 go/no-go; upstream-fix policy; no routing around |
+| Two processes, one state dir | Seam rules above; the existing `acquireDataDirLeaseForProcess` gets a Jac-side equivalent; conformance job |
+| Wire drift between zod and Jac validation | Emitted-schema validation in CI, both sides |
+| Packaging size/complexity for desktop | Spike in phase 0 before committing phases 4–5 |
+| Upstream-fix flood early on | Expected and budgeted; defect table below is the ledger |
+| Node→Python hot-path throughput on driver event fanout | Chat-scale, not high-frequency trading; measure in phase 3 against golden corpora before cutover |
+
+## Defect ledger (upstream PRs hit during migration)
+
+| # | Defect | Repro | Upstream PR | Status |
+| --- | --- | --- | --- | --- |
+| — | *none yet — phase 0 populates this* | | | |
+
+## Open decisions (reviewer's call; recommendations marked)
+
+1. **Scope breadth**: all backend (server + companion + enterprise) in Jac —
+   **recommended**; vs `server/` only.
+2. **Mechanics**: subsystem ownership (routes + topics + tables move
+   together) — **recommended**; vs route-by-route proxy (shared-state trap);
+   vs parallel rewrite with single cutover (months without a shippable win).
+3. **First live slice**: routines (phase 2) — **recommended** as first
+   client-visible traffic, after the phase-1 data layer; vs full chat-turn
+   vertical first (higher stall risk on runtime gaps).
+4. **Contract direction**: zod-as-source + emitted JSON Schema —
+   **recommended**; vs Jac-as-source codegen (premature).
+5. **First drivers**: claude + openai-chat (the two parsing extremes) —
+   **recommended**; port the remaining ~90 driver configs only after both
+   extremes pass golden.
+
+## Milestones
+
+- M0: spike report + upstream PRs filed (this plan updated with go/no-go).
+- M1: Jac serves threads/messages/memory off the same SQLite; conformance
+  job green in CI; router live in dev + deploy.
+- M2: routines live on Jac.
+- M3: drivers + bus on Jac; golden suites byte-exact.
+- M4: long-tail subsystems on Jac; verify scripts green.
+- M5: `server/index.ts` deleted; companion + enterprise ported; single
+  process again; plan closed out in `docs/verification/`.
