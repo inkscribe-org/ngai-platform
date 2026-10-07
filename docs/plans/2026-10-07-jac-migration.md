@@ -2,8 +2,8 @@
 
 Date: 2026-10-07. Base: `main` @ 63d0ef3. Branch: `jac/codebase-migration`.
 
-Status: **draft for review** — strategy proposal, no code yet. The open
-decisions in the last section need a call before phase 0 starts.
+Status: **phase 0 complete — GO**. Spike findings:
+`docs/plans/2026-10-07-jac-runtime-spike.md`. Spike code: `jac/spike/`.
 
 ## Origin
 
@@ -172,7 +172,7 @@ core turn pipeline on the runtime.
 
 | # | Defect | Repro | Upstream PR | Status |
 | --- | --- | --- | --- | --- |
-| — | *none yet — phase 0 populates this* | | | |
+| — | *none hit — spike passed with zero defects* | | | |
 
 ## Open decisions (reviewer's call; recommendations marked)
 

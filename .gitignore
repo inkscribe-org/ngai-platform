@@ -40,3 +40,7 @@ deploy/podman/.env
 deploy/podman/.env.*
 !deploy/podman/.env.example
 /.env
+
+# Jac toolchain artifacts (compile cache, session data, spike DBs)
+.jac/
+jac/**/*.db

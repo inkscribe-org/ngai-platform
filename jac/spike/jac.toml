@@ -1,0 +1,5 @@
+[project]
+name = "spike"
+kind = "service"
+entry-point = "spike"
+jac-version = "0.37.21"
