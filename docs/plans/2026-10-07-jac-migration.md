@@ -27,10 +27,15 @@ defect hit along the way to drive fixes upstream (`jaseci-labs/jac`).
 
 ## What "fully Jac" means here
 
-Jac compiles to Python; there is no production browser/Electron story. So
-"fully Jac" is defined as: **every backend process that owns business logic,
-state, or transports is Jac**; UI shells and platforms without a Python
-runtime stay as they are, talking the same wire contract.
+Jac compiles to Python for the server, but 0.37 also ships a `cl`
+codespace: JSX compiles to a React/Vite bundle, npm deps are declared in
+`jac.toml`, and `await serverFn()` in client code becomes a real RPC
+against `def:pub`/`walker:pub` endpoints. CSR only (no SSR) — which
+matches `src/`, already a Vite SPA. So "fully Jac" is defined as:
+**every backend process that owns business logic, state, or transports is
+Jac**, and the React client is a candidate port behind a phase-6 gate.
+UI shells and platforms without a Python runtime stay as they are,
+talking the same wire contract.
 
 | Component | Target | Rationale |
 | --- | --- | --- |
@@ -38,8 +43,9 @@ runtime stay as they are, talking the same wire contract.
 | `companion/` relay (~40 files) | **Jac** (phase 5) | Small; same stack, same wire |
 | `enterprise/` server (6 files) | **Jac** (phase 5, with server) | License routes touch the same store |
 | `shared/` wire contracts | **Stays zod/TS as source of truth** (see contract section) | Single source of truth for both sides |
-| `src/` React client | Stays | No Jac UI story; talks wire contract only |
+| `src/` React client | **Jac `cl`** — phase 6, committed | Jac compiles JSX→React/Vite; `has`→`useState`, `can entry`→`useEffect`, npm deps declared in `jac.toml`. A rewrite per component subtree, not a transform; talks the wire contract until cutover, then Jac RPC |
 | `electron/` shells | Stays JS; spawns the Jac harness binary instead of importing TS server code | Electron main is JS by design; only the embedded harness changes |
+| Hosted tier: `boat*`, `cloud-*`, `vps-*`, `hosted-*`, `lending-*`; fleet/tailscale/tunnel; voice/live-call/phone/TTS | **Deferred — stays on the TS harness or is re-scoped when needed** | Not core to the Jac port; ~13k LOC of impl the migration deliberately does not carry first |
 | `cloudflare/` Workers, `apps/docs`, `evals/`, `scripts/` | Stay TS | Workers have no Python runtime; docs/evals talk the wire contract; evals become the parity harness |
 
 ## Target architecture
@@ -124,6 +130,7 @@ not done.
 | 3 | Driver harness + bus/SSE (claude + openai-chat first, then the rest) | The heart; hardest; `evals/golden` byte-exact suites are the parity harness | golden suites byte-exact through Jac drivers; SSE topic cutover; permission broker cases ported |
 | 4 | Computers, connectors/MCP, webhooks, workspace backups, TTS/voice | Long tail; each moves with its tables and verify script | matching `scripts/verify-*.ts` green against Jac |
 | 5 | `companion/`, `enterprise/`, delete node harness | Everything else speaks the contract already | `scripts/verify-server-connection.mjs`, smoke suites green; `server/index.ts` deleted |
+| 6 | `src/` React client → Jac `cl` | Optional end-state; gated on a component spike + the open decision below | Jac client side-by-side with the TS SPA on the wire contract; cutover only when a page subtree reaches parity |
 
 Sequencing note: phases 1–2 are deliberately unglamorous. They prove the
 graph model and the router seam on low-risk traffic before phase 3 bets the
@@ -187,12 +194,29 @@ core turn pipeline on the runtime.
 4. **Contract direction**: zod-as-source + emitted JSON Schema —
    **recommended**; vs Jac-as-source codegen (premature).
 5. **First drivers**: claude + openai-chat (the two parsing extremes) —
-   **recommended**; port the remaining ~90 driver configs only after both
-   extremes pass golden.
+   **recommended**; port further drivers only if observed in real use.
+6. ~~Client migration~~ **decided 2026-10-07**: `src/` ports to Jac `cl`
+   JSX in phase 6 — a committed rewrite, per-subtree, on the wire
+   contract until each subtree's cutover, then Jac RPC.
+
+## Decided scope (2026-10-07, after inventory of ~127k backend impl LOC)
+
+- **Port**: thread/turn/bot core; store/message-db/sessions/checkpoints;
+  routines; permissions/admissions; MCP/Composio/connectors; memory;
+  workspace/backups; peer/team/org where it touches the core; webhooks;
+  config/CLI/presets; and the **top drivers by actual usage** — claude
+  first (it wins default selection in `server/default-model-selection.ts`),
+  then codex, openai-chat, pi, grok; the rest only if observed in use.
+- **Defer**: hosted/cloud tier (`boat*`, `cloud-*`, `vps-*`, `hosted-*`,
+  `lending-*`), fleet/tailscale/tunnel, voice/live-call/phone/TTS —
+  stays on the TS harness or is re-scoped when a real need appears.
+- **Tests**: the ~154k LOC of `server/*.test.ts` does not port wholesale;
+  parity evidence comes from the conformance job, golden suites, and
+  ported invariants — a test file's job is to die with its subsystem.
 
 ## Milestones
 
-- M0: spike report + upstream PRs filed (this plan updated with go/no-go).
+- M0: spike report + upstream PRs filed (this plan updated with go/no-go). **Done 2026-10-07 — GO, zero defects.**
 - M1: Jac serves threads/messages/memory off the same SQLite; conformance
   job green in CI; router live in dev + deploy.
 - M2: routines live on Jac.
@@ -200,3 +224,5 @@ core turn pipeline on the runtime.
 - M4: long-tail subsystems on Jac; verify scripts green.
 - M5: `server/index.ts` deleted; companion + enterprise ported; single
   process again; plan closed out in `docs/verification/`.
+- M6: `src/` subtrees ported to Jac `cl`; TS client deleted when coverage
+  is complete.
