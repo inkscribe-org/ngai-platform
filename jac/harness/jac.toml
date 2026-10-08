@@ -1,0 +1,5 @@
+[project]
+name = "harness"
+kind = "service"
+entry-point = "harness"
+jac-version = "0.37.21"

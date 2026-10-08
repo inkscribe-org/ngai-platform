@@ -1,0 +1,77 @@
+{
+  "description": "Recorded operation corpus for message-db parity: same sequence drives server/message-db.ts (node) and jac/harness (HTTP). Diffs compare .dump output of messages.db plus each op's result.",
+  "ops": [
+    {"op": "writeFile", "path": "messages-legacy1.json", "content": "[{\"id\":\"l1\",\"at\":1700000000000,\"role\":\"user\",\"kind\":\"text\",\"text\":\"legacy flat import\"},{\"id\":\"l2\",\"at\":1700000001000,\"role\":\"bot\",\"kind\":\"text\",\"text\":\"répondu — non-ASCII ç é ü 한국어\"}]"},
+    {"op": "writeFile", "path": "messages-legacy2.json", "content": "{\"messages\":[{\"id\":\"b1\",\"at\":1700000100000,\"role\":\"user\",\"kind\":\"text\",\"text\":\"branching import\"}],\"activeLeafId\":\"b1\"}"},
+
+    {"op": "appendMessage", "threadId": "t1", "message": {"id": "m1", "at": 1759850000000, "role": "user", "kind": "text", "text": "hello world"}},
+    {"op": "appendMessage", "threadId": "t1", "message": {"id": "m2", "at": 1759850000500, "role": "bot", "kind": "text", "text": "hi — emoji 🐭 and quote \"x\" and newline\ninside"}},
+    {"op": "insertMessage", "threadId": "t1", "message": {"id": "m1", "at": 1759850000000, "role": "user", "kind": "text", "text": "hello world", "extra": {"nested": [1, 2.5, null, true, "café"], "e": 1e21}}},
+    {"op": "updateMessage", "threadId": "t1", "message": {"id": "m2", "at": 1759850000500, "role": "bot", "kind": "text", "text": "updated text", "patched": true}},
+    {"op": "readThread", "threadId": "t1"},
+    {"op": "readThreadTail", "threadId": "t1", "limit": 1},
+    {"op": "readThreadTail", "threadId": "t1", "limit": 10},
+
+    {"op": "appendMessage", "threadId": "t2", "message": {"id": "a1", "at": 1759850100000, "role": "user", "kind": "activity", "tool": {"name": "run_migration"} }},
+    {"op": "appendMessage", "threadId": "t2", "message": {"id": "a2", "at": 1759850101000, "role": "bot", "kind": "digest", "text": "Worked on the migration plan for hours"}},
+    {"op": "appendMessage", "threadId": "t2", "message": {"id": "a3", "at": 1759850102000, "role": "user", "kind": "text", "text": "[Message from @Scout, another bot in this OpenMausBot workspace — not from your user.] can you check restaurants?", "peerAsk": {"name": "Scout"}}},
+    {"op": "appendMessage", "threadId": "t3", "message": {"id": "g1", "at": 1759850200000, "role": "bot", "kind": "goal.run", "goalRun": {"status": "working", "goal": "ship it"}}},
+    {"op": "appendMessage", "threadId": "t4", "message": {"id": "g2", "at": 1759850201000, "role": "bot", "kind": "goal.run", "goalRun": {"status": "done"}}},
+
+    {"op": "setActiveLeaf", "threadId": "t2", "leafId": "a3"},
+    {"op": "latestMessageAts", "threadIds": ["t1", "t2", "t3", "missing"]},
+    {"op": "threadsReferencing", "fragment": "run_migration"},
+    {"op": "threadsReferencing", "fragment": ""},
+
+    {"op": "searchMessages", "query": "MIGRATION"},
+    {"op": "searchMessages", "query": "hello", "threadId": "t1"},
+    {"op": "searchMessages", "query": "100%_wild"},
+    {"op": "searchMessages", "query": "   "},
+    {"op": "searchMessages", "query": "mous"},
+
+    {"op": "recallMessages", "query": "migration plan", "threadIds": ["t1", "t2"]},
+    {"op": "recallMessages", "query": "restaurants", "threadIds": ["t2"], "mode": "any"},
+    {"op": "recallMessages", "query": "the of in", "threadIds": ["t2"]},
+    {"op": "recallMessages", "query": "migration", "threadIds": ["t1", "t2"], "range": {"since": 1759850100500}},
+    {"op": "recentMessages", "threadIds": ["t1", "t2"], "range": {"since": 1759850000000, "until": 1759850300000}},
+    {"op": "latestSaidByBot", "threadIds": ["t1", "t2"], "botId": "bot-main", "since": 0},
+    {"op": "readMessageText", "threadId": "t2", "messageId": "a3"},
+    {"op": "readMessageText", "threadId": "t2", "messageId": "a1"},
+    {"op": "readMessageText", "threadId": "t2", "messageId": "nonexistent"},
+    {"op": "workingGoalRunMessages"},
+
+    {"op": "readThread", "threadId": "legacy1"},
+    {"op": "readThread", "threadId": "legacy2"},
+    {"op": "fileExists", "path": "messages-legacy1.json"},
+    {"op": "fileExists", "path": "messages-legacy1.json.imported"},
+
+    {"op": "saveChatFollowup", "followup": {"id": "f1", "kind": "bot", "ownerId": "bot1", "threadId": "t1", "payload": {"sendId": "s1", "text": "queued"}}},
+    {"op": "saveChatFollowup", "followup": {"id": "f2", "kind": "aside", "ownerId": "bot1", "threadId": "t2", "payload": {"sendId": "s2", "text": "aside note"}}},
+    {"op": "chatFollowups"},
+    {"op": "chatFollowups", "kind": "aside"},
+    {"op": "settleChatFollowups", "ids": ["f1"], "status": "cancelled"},
+    {"op": "settleChatFollowups", "ids": ["f2"], "status": null},
+    {"op": "chatFollowups"},
+    {"op": "cancelledChatFollowup", "kind": "bot", "ownerId": "bot1", "threadId": "t1", "sendId": "s1"},
+
+    {"op": "indexMemoryFile", "botId": "b-main", "path": "MEMORY.md", "text": "User prefers concise answers. Migration happens Tuesdays.", "stat": {"mtimeMs": 1759850300000, "bytes": 64}},
+    {"op": "indexMemoryFile", "botId": "b-main", "path": "memory/log/2026-10-06.md", "text": "Discussed migration scope", "stat": {"mtimeMs": 1759850300001, "bytes": 27}},
+    {"op": "indexMemoryFile", "botId": "b-other", "path": "MEMORY.md", "text": "Secret of another bot", "stat": {"mtimeMs": 1759850300002, "bytes": 21}},
+    {"op": "indexedMemoryFiles", "botId": "b-main"},
+    {"op": "recallMemory", "query": "concise answers", "botId": "b-main"},
+    {"op": "recallMemory", "query": "migration", "botId": "b-main", "mode": "any"},
+    {"op": "recallMemory", "query": "secret", "botId": "b-main"},
+    {"op": "removeMemoryFile", "botId": "b-main", "path": "memory/log/2026-10-06.md"},
+    {"op": "indexedMemoryFiles", "botId": "b-main"},
+
+    {"op": "recallTerms", "query": "Can you please remind me about the migration plan for v2.1?"},
+    {"op": "recallMatchTerm", "term": "restaurants"},
+    {"op": "recallMatchTerm", "term": "c++"},
+    {"op": "recallMatchTerm", "term": "aws"},
+
+    {"op": "importThread", "threadId": "t1", "messages": [{"id": "x", "at": 1, "role": "user", "kind": "text", "text": "must fail"}], "expectError": true},
+    {"op": "deleteThread", "threadId": "t3"},
+    {"op": "workingGoalRunMessages"},
+    {"op": "readThread", "threadId": "t3"}
+  ]
+}

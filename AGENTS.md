@@ -44,9 +44,12 @@ Learned during the phase-0 spike (`jac/spike/`); keep updated as we hit more:
   `asyncio.create_subprocess_exec` + `async for` over `proc.stdout`.
 - Backtick only real Jac keywords as identifiers (`default=`, `` `wait() ``);
   a backticked non-keyword is a hard error, not a no-op.
-- `glob` is the only globals keyword — functions rebind a `glob` directly (no
-  `global`/`nonlocal`). Annotate the glob's type (`: any`, `: int`) when the
-  initializer is `None`, else the checker pins it to `NoneType`.
+- `glob` declares module state but functions CANNOT rebind the name —
+  `x = v` inside a `def` creates a local (reads then see the module
+  default, or UnboundLocalError if a local assign comes after a local
+  read). Mutate through a dict/field (`_state["h"] = c`) or
+  `globals()["x"] = v`. Annotate the glob's type (`: any`, `: int`) when
+  the initializer is `None`, else the checker pins it to `NoneType`.
 - `is None` / `is not None`, never `== None` (checker warning).
 - Node-type filter: `[-->][?:Type]` — backticks in filter syntax are errors.
 - `with entry` is not async; `await` lives in `async def`/`async can`. Drive
@@ -57,3 +60,28 @@ Learned during the phase-0 spike (`jac/spike/`); keep updated as we hit more:
   routes — secure or disable before real traffic.
 - Runtime drops `.jac/` (compile cache, jwt secret) beside the project;
   both `.jac/` and `jac/**/*.db` are gitignored.
+- Bare `dict`/`list`/`tuple`/`set` annotations are errors — always
+  `dict[str, any]`, `list[any]`. `match`, `entry`, `hash` are keywords
+  (rename or backtick-escape). In-function docstrings are bare-expression
+  errors — use `#` comments. `for (k, v) in d.items()` needs parens.
+- `def:pub`/`walker:pub` optional params bind the *stringified* default
+  when the request omits them ('None', '40' — jaclang defect; fix in
+  flight upstream). Until patched, callers must send explicit values.
+- `jac run` inside a `kind = "service"` project always serves; to execute
+  module code ad hoc, run via the meta-importer from a Python with
+  jaclang installed (`/tmp/jacvenv`):
+  `sys.meta_path.insert(0, jaclang.meta_importer.JacMetaImporter())` then
+  `import <module>` with the harness dir on `sys.path`.
+- Typed traversal filter: `[n ->:EdgeType:->][?:NodeType]`; typed connect
+  `a +>:E:+> b`; disconnect `a del ->:E:-> b`; spawn `w spawn n`.
+- sqlite_master.sql stores CREATE text verbatim (minus IF NOT EXISTS) —
+  `.dump` parity requires byte-identical DDL whitespace.
+- The jacup binary unpacks jaclang sources to `~/.cache/jac/rt/<hash>/site/`;
+  patching those files patches the served runtime (cache dirs are
+  regenerated — treat as scratch).
+- `def init` compiles to the module's `__init__` (invisible to callers) —
+  name it `init_<thing>` or re-export: `glob init: any = init;` after the def.
+- `<base>.test.jac` annexes onto `<base>.jac` — the module is the merge of
+  both, so a test file must NOT `import` its own base (self-import = the
+  partially-initialized module). For cross-module tests, create a stub
+  `<base>.jac` and keep `import` statements in the annex only.

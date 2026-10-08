@@ -179,8 +179,8 @@ core turn pipeline on the runtime.
 
 | # | Defect | Repro | Upstream PR | Status |
 | --- | --- | --- | --- | --- |
-| — | *none hit — spike passed with zero defects* | | | |
-
+| 1 | `def:pub` optional params bind the STRINGIFIED default (`'None'`, `'40'`) when the request omits them — `introspect_callable` stringifies `param.default` while walkers keep the raw value | `def:pub f(x: (str\|None) = None)` + POST `{}` → `x == "None"` (string) | [jaseci-labs/jac#9865](https://github.com/jaseci-labs/jac/pull/9865) (`fix/introspect-callable-raw-defaults`, one-liner + 3 regression tests) | merged-pending; local runtime patched via `~/.cache/jac/rt/*/site`; conformance driver sends explicit defaults meanwhile |
+| 2 | Module `glob` vars cannot be rebound from `def` scope — plain `x = v` shadows locally (reads see the module default, or UnboundLocalError) | `db()`'s `_handle = open_db()` became a local; later calls saw `None` | not filed — language semantics, not a bug; doc note in AGENTS.md | fixed in our modules via `_state` dict / `globals()["x"]` |
 ## Open decisions (reviewer's call; recommendations marked)
 
 1. **Scope breadth**: all backend (server + companion + enterprise) in Jac —
@@ -218,7 +218,11 @@ core turn pipeline on the runtime.
 
 - M0: spike report + upstream PRs filed (this plan updated with go/no-go). **Done 2026-10-07 — GO, zero defects.**
 - M1: Jac serves threads/messages/memory off the same SQLite; conformance
-  job green in CI; router live in dev + deploy.
+  job green in CI; router live in dev + deploy. **In progress 2026-10-07:**
+  `jac/harness/` has the ported layer (db/messages/memory/sessions/
+  checkpoints/lease/graph), conformance corpus green (62 ops, byte-identical
+  `messages.db` dumps), 14/14 ported test invariants pass. Store registry
+  (bots.json/groups.json) + router wiring remain.
 - M2: routines live on Jac.
 - M3: drivers + bus on Jac; golden suites byte-exact.
 - M4: long-tail subsystems on Jac; verify scripts green.
