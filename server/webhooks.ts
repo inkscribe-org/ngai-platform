@@ -56,6 +56,10 @@ export interface WebhookManagerOptions {
   now?: () => number;
   emit?: (event: WebhookManagerEvent) => void;
   botState: (botId: string) => "ready" | "busy" | "missing";
+  // The four routines-facing callbacks may now be promises: the scheduler
+  // lives in the Jac harness (server/jac-routines.ts), so commit/dedup/
+  // count calls cross a process boundary. receive()/update()/remove()/
+  // disableForBot() await them; in-process test doubles can stay sync.
   enqueue: (input: {
     webhookId: string;
     webhookName: string;
@@ -64,9 +68,9 @@ export interface WebhookManagerOptions {
     runOn: RoutineRunOn;
     deliveryId: string;
     receivedAt: number;
-  }) => { id: string };
-  cancelQueued?: (webhookId: string, message: string) => void;
-  pendingRuns?: (webhookId: string) => number;
+  }) => { id: string } | Promise<{ id: string }>;
+  cancelQueued?: (webhookId: string, message: string) => void | Promise<void>;
+  pendingRuns?: (webhookId: string) => number | Promise<number>;
   /** Sink for delivery:"post" webhooks: the payload text lands as the
    *  bot's own message in `threadId` -- the trigger's own stable
    *  destination from `resolvePostThread`, never a caller-supplied
@@ -87,7 +91,7 @@ export interface WebhookManagerOptions {
    *  https://github.com/milind-soni/OpenMausBot/issues/2071. */
   resolvePostThread?: (trigger: WebhookTrigger, forceNew: boolean) => string | undefined;
   /** The execution store commits this identity together with the queued run. */
-  findRun?: (webhookId: string, deliveryId: string) => { id: string } | null;
+  findRun?: (webhookId: string, deliveryId: string) => { id: string } | null | Promise<{ id: string } | null>;
 }
 
 export type WebhookManagerEvent =
@@ -369,7 +373,7 @@ export class WebhookManager {
     return { webhook: publicTrigger(trigger), secret };
   }
 
-  update(id: string, value: JsonValue): WebhookTrigger | null {
+  async update(id: string, value: JsonValue): Promise<WebhookTrigger | null> {
     const trigger = this.webhooks.find((candidate) => candidate.id === id);
     if (!trigger) return null;
     const patch = parseTriggerPatch(value);
@@ -390,14 +394,14 @@ export class WebhookManager {
     if (!clean.eventTypes?.length) delete trigger.eventTypes;
     if (clean.maxPendingRuns === undefined) delete trigger.maxPendingRuns;
     if (patch.enabled === false) {
-      this.options.cancelQueued?.(trigger.id, "The webhook was paused before this delivery started");
+      await this.options.cancelQueued?.(trigger.id, "The webhook was paused before this delivery started");
     }
     this.save();
     this.emit(trigger);
     return publicTrigger(trigger);
   }
 
-  remove(id: string): boolean {
+  async remove(id: string): Promise<boolean> {
     const at = this.webhooks.findIndex((candidate) => candidate.id === id);
     if (at === -1) return false;
     const [trigger] = this.webhooks.splice(at, 1);
@@ -405,7 +409,7 @@ export class WebhookManager {
     this.attempts = this.attempts.filter((attempt) => attempt.webhookId !== trigger.id);
     this.rate.delete(trigger.endpointId);
     this.unauthorized.delete(trigger.id);
-    this.options.cancelQueued?.(trigger.id, "The webhook was deleted before this delivery started");
+    await this.options.cancelQueued?.(trigger.id, "The webhook was deleted before this delivery started");
     this.save();
     this.options.emit?.({ kind: "webhook.deleted", webhookId: id });
     return true;
@@ -422,13 +426,13 @@ export class WebhookManager {
     return { webhook: publicTrigger(trigger), secret };
   }
 
-  disableForBot(botId: string): void {
+  async disableForBot(botId: string): Promise<void> {
     let changed = false;
     for (const trigger of this.webhooks) {
       if (trigger.botId !== botId || !trigger.enabled) continue;
       trigger.enabled = false;
       trigger.updatedAt = this.now();
-      this.options.cancelQueued?.(trigger.id, "The assigned MAUS was deleted");
+      await this.options.cancelQueued?.(trigger.id, "The assigned MAUS was deleted");
       this.emit(trigger);
       changed = true;
     }
@@ -440,12 +444,12 @@ export class WebhookManager {
     return Boolean(trigger && secretMatches(secret, trigger.secretHash));
   }
 
-  receive(endpointId: string, secret: string, event: WebhookEvent): WebhookReceiveResult {
+  async receive(endpointId: string, secret: string, event: WebhookEvent): Promise<WebhookReceiveResult> {
     const trigger = this.webhooks.find((candidate) => candidate.endpointId === endpointId);
     if (!trigger || !secretMatches(secret, trigger.secretHash)) fail(401, "Invalid webhook URL or secret");
     if (trigger.verificationPending && !trigger.enabled) return this.captureVerification(trigger, event);
     try {
-      return this.dispatch(trigger, event);
+      return await this.dispatch(trigger, event);
     } catch (error) {
       const parsedError = statusErrorSchema.safeParse(error);
       const status = parsedError.success ? parsedError.data.status ?? 500 : 500;
@@ -454,7 +458,7 @@ export class WebhookManager {
     }
   }
 
-  test(id: string, payload: JsonValue = { event: "openmaus.test", message: "Test webhook delivery" }): WebhookReceiveResult | null {
+  async test(id: string, payload: JsonValue = { event: "openmaus.test", message: "Test webhook delivery" }): Promise<WebhookReceiveResult | null> {
     const trigger = this.webhooks.find((candidate) => candidate.id === id);
     if (!trigger) return null;
     const eventName = trigger.eventTypes?.[0] ?? "openmaus.test";
@@ -501,7 +505,7 @@ export class WebhookManager {
     return attempt;
   }
 
-  private dispatch(trigger: StoredWebhookTrigger, event: WebhookEvent): WebhookReceiveResult {
+  private async dispatch(trigger: StoredWebhookTrigger, event: WebhookEvent): Promise<WebhookReceiveResult> {
     if (!trigger.enabled) fail(409, "This webhook is paused");
     if (this.options.botState(trigger.botId) === "missing") fail(410, "The assigned MAUS no longer exists");
 
@@ -522,7 +526,7 @@ export class WebhookManager {
     const requestedDeliveryId = String(event.deliveryId ?? "").trim().slice(0, 200);
     if (requestedDeliveryId) {
       const key = `${trigger.endpointId}:${requestedDeliveryId}`;
-      const committed = this.options.findRun?.(trigger.id, requestedDeliveryId);
+      const committed = await this.options.findRun?.(trigger.id, requestedDeliveryId);
       const duplicate = committed
         ? { runId: committed.id }
         : this.deliveries.find((delivery) => delivery.key === key);
@@ -542,7 +546,7 @@ export class WebhookManager {
     // A sender retrying an already-accepted delivery must remain idempotent
     // even while this webhook's queue is full. Only new work consumes a slot.
     const maxPendingRuns = trigger.maxPendingRuns ?? DEFAULT_MAX_PENDING_RUNS;
-    const pendingRuns = this.options.pendingRuns?.(trigger.id) ?? 0;
+    const pendingRuns = await this.options.pendingRuns?.(trigger.id) ?? 0;
     if (pendingRuns >= maxPendingRuns) {
       fail(429, `This webhook already has ${pendingRuns} unfinished ${pendingRuns === 1 ? "task" : "tasks"} (its limit is ${maxPendingRuns}). `
         + "Retry after one finishes, or raise \"Unfinished tasks at once\" in the webhook's settings.");
@@ -587,7 +591,7 @@ export class WebhookManager {
       this.emit(trigger);
       return { deliveryId, duplicate: false };
     }
-    const run = this.options.enqueue({
+    const run = await this.options.enqueue({
       webhookId: trigger.id,
       webhookName: trigger.name,
       prompt: eventPrompt(trigger, event, now, deliveryId),

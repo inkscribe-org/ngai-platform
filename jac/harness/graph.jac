@@ -39,10 +39,11 @@ node MemoryFile {
         bytes: int = 0;
 }
 
-edge Next {}
-edge Contains {}
-edge Authored {}
-edge Indexes {}
+# Endpoint pairs are spelled out: newer jac compilers reject the bare form.
+edge Next: any --> any {}
+edge Contains: any --> any {}
+edge Authored: any --> any {}
+edge Indexes: any --> any {}
 
 
 def thread_node(thread_id: str) -> Thread {

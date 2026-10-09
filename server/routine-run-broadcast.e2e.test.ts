@@ -13,12 +13,14 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { SessionRegistry } from "./sessions.ts";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 
+import { jacHarnessAvailable, resolveJacBinary } from "../scripts/control-omb.ts";
+
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const FAKE_CLI = join(SERVER_DIR, "testing", "fake-acp-cli.ts");
 const PORT = 28800 + Math.floor(Math.random() * 10_000);
 const BASE = `http://127.0.0.1:${PORT}`;
 const OWNER = "owner@example.test";
-const posixOnly = describe.skipIf(process.platform === "win32");
+const posixOnly = describe.skipIf(process.platform === "win32" || !jacHarnessAvailable());
 
 let child: ChildProcess;
 let home: string;
@@ -97,6 +99,10 @@ posixOnly("a routine run's task on the event stream", () => {
       env: {
         ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
         HOME: home, OMB_PORT: String(PORT), OMB_WEBHOOK_PORT: String(PORT + 1),
+        // A hand-spawned fixture inherits this environment wholesale; the
+        // Jac harness binary must be named explicitly like control-omb's
+        // verificationServerEnvironment does.
+        OMB_JAC_BIN: resolveJacBinary(process.env) ?? "",
       },
       stdio: ["ignore", "pipe", "pipe"],
     });

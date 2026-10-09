@@ -76,12 +76,42 @@ Learned during the phase-0 spike (`jac/spike/`); keep updated as we hit more:
   `a +>:E:+> b`; disconnect `a del ->:E:-> b`; spawn `w spawn n`.
 - sqlite_master.sql stores CREATE text verbatim (minus IF NOT EXISTS) —
   `.dump` parity requires byte-identical DDL whitespace.
-- The jacup binary unpacks jaclang sources to `~/.cache/jac/rt/<hash>/site/`;
-  patching those files patches the served runtime (cache dirs are
-  regenerated — treat as scratch).
+- The jacup binary unpacks jaclang sources to `~/.cache/jac/rt/<hash>/site/`,
+  but serves them from `_precompiled/**/*.jir` bundles when those exist —
+  **editing the `.jac` source under `site/` does nothing at runtime**;
+  the impl annexes are fused into the base module's jir
+  (`server/impl/server.impl.jac` → `server/server.jir`), keyed by manifest
+  sha256 that does not track annex contents. Until a fixed jacup lands,
+  the durable mitigation is app-side: treat any optional `def:pub` arg
+  that is not the expected type as absent (`isinstance(x, dict)` /
+  `isinstance(x, int)` guards in the public wrappers), since the fused
+  binary binds the *stringified* default (`'None'`, `'40'`) when the
+  request omits the kwarg. `routines.jac` does this for `req`-style
+  request objects and `int|None` bounds.
 - `def init` compiles to the module's `__init__` (invisible to callers) —
   name it `init_<thing>` or re-export: `glob init: any = init;` after the def.
 - `<base>.test.jac` annexes onto `<base>.jac` — the module is the merge of
   both, so a test file must NOT `import` its own base (self-import = the
   partially-initialized module). For cross-module tests, create a stub
   `<base>.jac` and keep `import` statements in the annex only.
+
+
+## 6. Routines on Jac (phase 2, done 2026-10-08)
+
+- `jac/harness/routines.jac` is the scheduler; `server/routines.ts` is now
+  types + `nextOccurrence` only. `server/jac-routines.ts` is the seam:
+  serialized ops over `jacOp`, a sync mirror fed by emit frames, spawn +
+  health supervision with restart backoff, and a shared-secret bridge.
+- Jac→node bridge: jac POSTs `{op, ...payload}` to
+  `/api/internal/routine-bridge` with snake_case top-level keys; node
+  normalizes `bot_id/group_id/thread_id/run_on` to camel at the boundary
+  and answers with both `threadId` and `thread_id` present.
+- Jac's embedded Postgres daemon is shared machine-wide and listens under
+  `<TMPDIR>/jacpg-<digest>`; the spawned harness overrides `TMPDIR` to
+  `<XDG_CACHE_HOME|HOME/.cache>/jac/tmp` so fixture teardown cannot orphan
+  the daemon's socket. Fixture verification environments forward the
+  operator's `XDG_CACHE_HOME` so the ~830MB runtime extraction is reused.
+- `scripts/verify-routines.ts` parks serving on success (Ctrl-C to stop;
+  `timeout` exit 124 after printing the summary JSON is a pass). Fixture
+  dataDirs self-clean; `OMB_VERIFY_KEEP_DATA=1` preserves them for
+  post-mortems. `OMB_VERIFY_STEP_MS` widens the per-step wait.

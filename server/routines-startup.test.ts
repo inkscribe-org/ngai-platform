@@ -4,11 +4,12 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 
-import { launchVerificationServer, runControlOmb } from "../scripts/control-omb.ts";
-import { RoutineManager, type RoutineRun } from "./routines.ts";
+import { jacHarnessAvailable, launchVerificationServer, resolveJacBinary, runControlOmb } from "../scripts/control-omb.ts";
+import type { RoutineRun } from "./routines.ts";
 import { waitForExit } from "./testing/cleanup.ts";
 
-it("recovers queued/due work without resurrecting an interrupted routine after restart", async () => {
+const itJac = it.skipIf(!jacHarnessAvailable());
+itJac("recovers queued/due work without resurrecting an interrupted routine after restart", async () => {
   const fixture = await launchVerificationServer();
   const { url, dataDir, logPath } = fixture.info;
   let restarted: ChildProcess | undefined;
@@ -53,15 +54,17 @@ it("recovers queued/due work without resurrecting an interrupted routine after r
 
     // The original child is gone; only its owned temporary store is edited.
     const file = join(dataDir, "routines.json");
-    const scheduler = new RoutineManager({
-      file, botState: () => "busy", createTask: () => null, startTurn: async () => {},
-    });
-    const queued = scheduler.runNow(manual.id)!;
-    await scheduler.tick();
-    expect(scheduler.listRuns().find((run) => run.id === queued.id)?.status).toBe("queued");
     const disk = JSON.parse(readFileSync(file, "utf8"));
     const dueAt = Date.now() - 1_000;
     const cronDueAt = Math.floor(Date.now() / 60_000) * 60_000 - 5 * 60_000;
+    // A manual run committed to the queue before the crash must dispatch
+    // after restart — push the same record the manager used to write.
+    const queued = {
+      id: "queued-run", routineId: manual.id, routineName: manual.name,
+      prompt: manual.prompt, target: "bot", botId: queuedBot.id, runOn: "maus",
+      scheduledFor: dueAt, createdAt: dueAt, manual: true, status: "queued",
+    };
+    disk.runs.push(queued);
     disk.routines.find((routine: { id: string }) => routine.id === cron.id).enabled = true;
     disk.routines.find((routine: { id: string }) => routine.id === cron.id).nextRunAt = cronDueAt;
     disk.routines.find((routine: { id: string }) => routine.id === scheduled.id).schedule.at = dueAt;
@@ -103,6 +106,9 @@ it("recovers queued/due work without resurrecting an interrupted routine after r
       TEMP: join(dataDir, "tmp"), TMP: join(dataDir, "tmp"), TMPDIR: join(dataDir, "tmp"),
       OMB_PORT: new URL(url).port, OMB_WEBHOOK_PORT: String(Number(new URL(url).port) + 1),
       PATH: dirname(process.execPath), FAKE_CLAUDE_MODE: "happy",
+      // The respawned server must reach the same Jac binary control-omb's
+      // launchVerificationServer resolved for its own child.
+      OMB_JAC_BIN: resolveJacBinary(process.env) ?? "",
     });
     const log = openSync(logPath, "a", 0o600);
     restarted = spawn(process.execPath, ["--experimental-strip-types", fileURLToPath(new URL("./index.ts", import.meta.url))], {

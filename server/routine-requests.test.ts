@@ -15,7 +15,7 @@ import {
   type RoutineRequestStore,
   type RoutineToolDefinitionInput,
 } from "./routine-requests.ts";
-import { RoutineManager, type RoutineInput } from "./routines.ts";
+import { RoutineManager, nextOccurrence as scheduleNextOccurrence, type RoutineInput } from "./routines.ts";
 import type { JsonValue } from "./schema.ts";
 
 class MemoryStore implements RoutineRequestStore {
@@ -77,7 +77,9 @@ function harness(
   const store = new MemoryStore();
   const service = new RoutineRequestService({
     store,
-    routines,
+    // RoutineManager is synchronous but structurally satisfies RoutineOps;
+    // nextOccurrence is a free function over schedules, attached here.
+    routines: Object.assign(routines, { nextOccurrence: scheduleNextOccurrence }),
     now: () => clock.now,
     timeZone: () => "Asia/Kolkata",
     cloudReady,
@@ -131,12 +133,12 @@ describe("RoutineRequestService", () => {
       const first = await service.propose({ botId: "bot-a", threadId: "thread-a", proposal: createProposal() });
       const second = await service.propose({ botId: "bot-a", threadId: "thread-b", proposal: createProposal() });
       const resolve = (threadId: string, requestId: string) => service.resolve({ botId: "bot-a", threadId, requestId, behavior: "allow" });
-      expect(resolve("thread-a", first.requestId)).toMatchObject({ state: "applied" });
-      expect(resolve("thread-b", second.requestId)).toMatchObject({ state: "invalid", status: 409 });
-      expect(resolve("thread-a", first.requestId)).toMatchObject({ state: "already_settled" });
+      expect(await resolve("thread-a", first.requestId)).toMatchObject({ state: "applied" });
+      expect(await resolve("thread-b", second.requestId)).toMatchObject({ state: "invalid", status: 409 });
+      expect(await resolve("thread-a", first.requestId)).toMatchObject({ state: "already_settled" });
       // The duplicate check expired the second card; it can no longer be
       // decided at all, not even cancelled. Its replay stays settled too.
-      expect(service.resolve({ botId: "bot-a", threadId: "thread-b", requestId: second.requestId, behavior: "deny" }))
+      expect(await service.resolve({ botId: "bot-a", threadId: "thread-b", requestId: second.requestId, behavior: "deny" }))
         .toMatchObject({ claimed: true, state: "invalid", status: 409 });
       expect(store.messagesFor("thread-b")[0]!.card).toMatchObject({ expired: true, options: [] });
       expect(routines.listRoutines()).toHaveLength(1);
@@ -229,7 +231,7 @@ describe("RoutineRequestService", () => {
     const run = await submit({ action: "run_now", routineId });
     expect(run).toMatchObject({ state: "applied", result: { action: "run_now" } });
     expect(routines.listRuns()).toHaveLength(1);
-    expect(service.resolve({ botId: "bot-a", threadId: "full-thread", requestId: run.requestId, behavior: "allow" }))
+    expect(await service.resolve({ botId: "bot-a", threadId: "full-thread", requestId: run.requestId, behavior: "allow" }))
       .toMatchObject({ state: "already_settled", behavior: "allow" });
     expect(routines.listRuns()).toHaveLength(1);
     expect(await submit({ action: "delete", routineId })).toMatchObject({ state: "applied" });
@@ -268,7 +270,7 @@ describe("RoutineRequestService", () => {
     expect(routines.listRuns()).toHaveLength(1);
     expect(store.messagesFor("thread-a").at(-1)?.card).toMatchObject({ dismissed: true, options: [] });
     settle.mockRestore();
-    expect(service.resolve({ botId: "bot-a", threadId: "thread-a", requestId: run.requestId, behavior: "allow" }))
+    expect(await service.resolve({ botId: "bot-a", threadId: "thread-a", requestId: run.requestId, behavior: "allow" }))
       .toMatchObject({ state: "applied", resultId: run.result!.resultId });
     expect(routines.listRuns()).toHaveLength(1);
     expect(routines.routineRequestReceipt(run.requestId)).toBeNull();
@@ -300,14 +302,14 @@ describe("RoutineRequestService", () => {
     // Persisted JSON cards retain the original version and exact executable rule.
     message.card = JSON.parse(JSON.stringify(message.card)) as RoutineRequestOptionCard;
     expect(message.card.routineRequest).toMatchObject({ version: 1, operation: { routine: { schedule } } });
-    expect(service.resolve({ botId: "bot-a", threadId: "thread-a", requestId: proposed.requestId, behavior: "allow" }))
+    expect(await service.resolve({ botId: "bot-a", threadId: "thread-a", requestId: proposed.requestId, behavior: "allow" }))
       .toMatchObject({ state: "applied", action: "create" });
     const routineId = routines.listRoutines()[0]!.id;
     expect(routines.listRoutines()[0]).toMatchObject({ schedule, enabled: true, nextRunAt: proposed.nextRunAt });
     const apply = async (proposal: RoutineProposalInput) => {
       clock.now += 1;
       const card = await service.propose({ botId: "bot-a", threadId: "thread-a", proposal });
-      expect(service.resolve({ botId: "bot-a", threadId: "thread-a", requestId: card.requestId, behavior: "allow" }).state).toBe("applied");
+      expect((await service.resolve({ botId: "bot-a", threadId: "thread-a", requestId: card.requestId, behavior: "allow" })).state).toBe("applied");
       return card;
     };
     const lastDay = { ...schedule, expression: "0 9 L * *" };
@@ -351,7 +353,7 @@ describe("RoutineRequestService", () => {
     const operation = card.routineRequest!.operation;
     if (operation.action !== "create") throw new Error("Expected create");
     Object.assign(operation.routine.schedule, { expression: "0 9 31 2 *" });
-    expect(service.resolve({ botId: "bot-a", threadId: "thread-a", requestId: proposed.requestId, behavior: "allow" }))
+    expect(await service.resolve({ botId: "bot-a", threadId: "thread-a", requestId: proposed.requestId, behavior: "allow" }))
       .toMatchObject({ state: "invalid", status: 400 });
     expect(routines.listRoutines()).toHaveLength(0);
     expect(card.answered).toBeUndefined();
@@ -404,7 +406,7 @@ describe("RoutineRequestService", () => {
       routine: { continuity: true },
     });
 
-    const result = service.resolve({
+    const result = await service.resolve({
       botId: "bot-a",
       threadId: "thread-a",
       requestId: proposed.requestId,
@@ -418,12 +420,12 @@ describe("RoutineRequestService", () => {
     const { service, routines } = harness();
     const created = await service.propose({ botId: "bot-a", threadId: "thread-a", proposal: createProposal({ overlap: "queue" }) });
     expect(created.detail).toContain("Queue one scheduled run; skip further occurrences");
-    service.resolve({ botId: "bot-a", threadId: "thread-a", requestId: created.requestId, behavior: "allow" });
+    await service.resolve({ botId: "bot-a", threadId: "thread-a", requestId: created.requestId, behavior: "allow" });
     const routine = routines.listRoutines()[0];
     expect(routine.overlap).toBe("queue");
     const update = await service.propose({ botId: "bot-a", threadId: "thread-a", proposal: { action: "update", routineId: routine.id, changes: { overlap: "skip" } } });
     expect(update.detail).toContain("Skip overlapping scheduled occurrences");
-    service.resolve({ botId: "bot-a", threadId: "thread-a", requestId: update.requestId, behavior: "allow" });
+    await service.resolve({ botId: "bot-a", threadId: "thread-a", requestId: update.requestId, behavior: "allow" });
     expect(routines.listRoutines()[0].overlap).toBeUndefined();
   });
 
@@ -562,7 +564,7 @@ describe("RoutineRequestService", () => {
       threadId: "thread-a",
       proposal: createProposal({ schedule: { type: "interval", everyMinutes: 5 } }),
     });
-    expect(service.resolve({
+    expect(await service.resolve({
       botId: "bot-a",
       threadId: "thread-a",
       requestId: created.requestId,
@@ -573,7 +575,7 @@ describe("RoutineRequestService", () => {
     const apply = async (proposal: RoutineProposalInput) => {
       await service.propose({ botId: "bot-a", threadId: "thread-a", proposal });
       const card = store.messagesFor("thread-a").at(-1)!.card!;
-      const result = service.resolve({
+      const result = await service.resolve({
         botId: "bot-a",
         threadId: "thread-a",
         requestId: card.requestId!,
@@ -738,7 +740,7 @@ describe("RoutineRequestService", () => {
       },
     });
 
-    expect(service.resolve({
+    expect(await service.resolve({
       botId: "bot-a",
       threadId: "thread-a",
       requestId: proposed.requestId,
@@ -776,7 +778,7 @@ describe("RoutineRequestService", () => {
         schedule: { type: "interval", everyMinutes: 15, weekdays: null, window: null, endsAt: null },
       },
     });
-    expect(service.resolve({
+    expect(await service.resolve({
       botId: "bot-a",
       threadId: "thread-a",
       requestId: clearProposal.requestId,
@@ -826,7 +828,7 @@ describe("RoutineRequestService", () => {
     expect(restrictedWithoutAnchor.detail).not.toContain("One interval after confirmation");
 
     clock.now = now + 7 * 60_000;
-    expect(service.resolve({
+    expect(await service.resolve({
       botId: "bot-a",
       threadId: "thread-b",
       requestId: withoutAnchor.requestId,
@@ -1010,7 +1012,7 @@ describe("RoutineRequestService", () => {
     const { service, routines, store } = harness();
     const proposal = await service.propose({ botId: "bot-a", threadId: "thread-a", proposal: createProposal() });
 
-    expect(service.resolve({
+    expect(await service.resolve({
       botId: "bot-a",
       threadId: "thread-a",
       requestId: proposal.requestId,
@@ -1018,20 +1020,20 @@ describe("RoutineRequestService", () => {
     })).toMatchObject({ claimed: true, state: "invalid" });
     expect(store.messagesFor("thread-a")[0]!.card!.answered).toBeUndefined();
 
-    expect(service.resolve({
+    expect(await service.resolve({
       botId: "bot-a",
       threadId: "thread-a",
       requestId: proposal.requestId,
       behavior: "deny",
     })).toEqual({ claimed: true, state: "denied" });
     expect(routines.listRoutines()).toHaveLength(0);
-    expect(service.resolve({
+    expect(await service.resolve({
       botId: "bot-a",
       threadId: "thread-a",
       requestId: proposal.requestId,
       behavior: "allow",
     })).toEqual({ claimed: true, state: "already_settled", behavior: "deny" });
-    expect(service.resolve({
+    expect(await service.resolve({
       botId: "bot-a",
       threadId: "thread-a",
       requestId: "provider-request",
@@ -1073,7 +1075,7 @@ describe("RoutineRequestService", () => {
     expect(receipt?.resultId).toBe(committed.id);
     clock.now += 60_000;
 
-    const first = service.resolve({
+    const first = await service.resolve({
       botId: "bot-a",
       threadId: "thread-a",
       requestId: proposal.requestId,
@@ -1097,7 +1099,7 @@ describe("RoutineRequestService", () => {
 
     // Once the durable card is settled, duplicate clicks are claimed by the
     // card itself and the compact recovery receipt can be removed.
-    const second = service.resolve({
+    const second = await service.resolve({
       botId: "bot-a",
       threadId: "thread-a",
       requestId: proposal.requestId,
@@ -1106,7 +1108,7 @@ describe("RoutineRequestService", () => {
     expect(second).toMatchObject({ claimed: true, state: "already_settled", behavior: "allow" });
     expect(routines.listRoutines()).toHaveLength(1);
 
-    expect(service.resolve({
+    expect(await service.resolve({
       botId: "bot-b",
       threadId: "thread-a",
       requestId: proposal.requestId,
@@ -1132,7 +1134,7 @@ describe("RoutineRequestService", () => {
 
     const apply = async (proposal: RoutineProposalInput) => {
       const card = await service.propose({ botId: "bot-a", threadId: "thread-a", proposal });
-      const result = service.resolve({
+      const result = await service.resolve({
         botId: "bot-a",
         threadId: "thread-a",
         requestId: card.requestId,
@@ -1185,7 +1187,7 @@ describe("RoutineRequestService", () => {
       fingerprintVersion: 1,
       fingerprint: cardFingerprint(runCard, runMessage.id),
     });
-    expect(service.resolve({
+    expect(await service.resolve({
       botId: "bot-a",
       threadId: "thread-a",
       requestId: runNow.requestId,
@@ -1193,7 +1195,7 @@ describe("RoutineRequestService", () => {
     })).toMatchObject({ claimed: true, state: "applied" });
     expect(routines.listRuns()).toHaveLength(1);
     expect(routines.routineRequestReceipt(runNow.requestId)).toBeNull();
-    expect(service.resolve({
+    expect(await service.resolve({
       botId: "bot-a",
       threadId: "thread-a",
       requestId: runNow.requestId,
@@ -1225,7 +1227,7 @@ describe("RoutineRequestService", () => {
 
     const changed = routines.update(routine.id, { name: "Changed elsewhere" })!;
     expect(changed.updatedAt).toBeGreaterThan(routine.updatedAt);
-    expect(service.resolve({
+    expect(await service.resolve({
       botId: "bot-a",
       threadId: "thread-a",
       requestId: proposed.requestId,
@@ -1259,7 +1261,7 @@ describe("RoutineRequestService", () => {
       updatedAt: routine.updatedAt,
       nextRunAt: anchorAt + 5 * 60_000,
     });
-    expect(service.resolve({
+    expect(await service.resolve({
       botId: "bot-a",
       threadId: "thread-a",
       requestId: proposed.requestId,
@@ -1287,7 +1289,7 @@ describe("RoutineRequestService", () => {
     await routines.tick();
     expect(routines.listRoutines()[0]).toMatchObject({ enabled: false, nextRunAt: null });
     expect(routines.listRoutines()[0]!.updatedAt).toBeGreaterThan(routine.updatedAt);
-    expect(service.resolve({
+    expect(await service.resolve({
       botId: "bot-a",
       threadId: "thread-a",
       requestId: proposed.requestId,
@@ -1322,7 +1324,7 @@ describe("RoutineRequestService", () => {
       fingerprintVersion: 1,
       fingerprint: cardFingerprint(updateCard, updateMessage.id),
     })!;
-    expect(service.resolve({
+    expect(await service.resolve({
       botId: "bot-a",
       threadId: "thread-a",
       requestId: update.requestId,
@@ -1348,7 +1350,7 @@ describe("RoutineRequestService", () => {
       fingerprintVersion: 1,
       fingerprint: cardFingerprint(deleteCard, deleteMessage.id),
     });
-    expect(service.resolve({
+    expect(await service.resolve({
       botId: "bot-a",
       threadId: "thread-a",
       requestId: deletion.requestId,
@@ -1373,7 +1375,7 @@ describe("RoutineRequestService", () => {
     });
 
     routines.update(routine.id, { name: "Reviewed", prompt: "Unrelated changed instructions" });
-    expect(service.resolve({
+    expect(await service.resolve({
       botId: "bot-a",
       threadId: "thread-a",
       requestId: proposal.requestId,
@@ -1399,7 +1401,7 @@ describe("RoutineRequestService", () => {
     const card = message.card!;
     Object.assign(card.routineRequest!.operation, { action: "destroy" });
 
-    expect(service.resolve({
+    expect(await service.resolve({
       botId: "bot-a",
       threadId: "thread-a",
       requestId: proposed.requestId,
@@ -1408,7 +1410,7 @@ describe("RoutineRequestService", () => {
     expect(routines.listRoutines()).toMatchObject([{ id: routine.id, name: "Keep me" }]);
     expect(card.answered).toBeUndefined();
 
-    expect(service.resolve({
+    expect(await service.resolve({
       botId: "bot-a",
       threadId: "thread-a",
       requestId: proposed.requestId,
@@ -1443,7 +1445,7 @@ describe("RoutineRequestService", () => {
     });
     Object.assign(card.routineRequest!.operation, { action: "future_schema_action" });
 
-    expect(service.resolve({
+    expect(await service.resolve({
       botId: "bot-a",
       threadId: "thread-a",
       requestId: proposed.requestId,
@@ -1464,7 +1466,7 @@ describe("RoutineRequestService", () => {
     const card = store.messagesFor("thread-a")[0]!.card!;
     card.routineRequest!.requestId = "nested-wrong-id";
 
-    expect(service.resolve({
+    expect(await service.resolve({
       botId: "bot-a",
       threadId: "thread-a",
       requestId: proposed.requestId,
@@ -1518,7 +1520,7 @@ describe("RoutineRequestService", () => {
     });
     clock.now = scheduledAt + 1;
 
-    expect(service.resolve({
+    expect(await service.resolve({
       botId: "bot-a",
       threadId: "thread-a",
       requestId: proposal.requestId,
@@ -1547,7 +1549,7 @@ describe("RoutineRequestService", () => {
       },
     });
     clock.now = scheduledAt + 1;
-    expect(service.resolve({ botId: "bot-a", threadId: "thread-a", requestId: proposal.requestId, behavior: "allow" }))
+    expect(await service.resolve({ botId: "bot-a", threadId: "thread-a", requestId: proposal.requestId, behavior: "allow" }))
       .toMatchObject({ claimed: true, state: "invalid", status: 409 });
     expect(store.messagesFor("thread-a")[0]!.card).toMatchObject({ expired: true });
 
@@ -1555,9 +1557,9 @@ describe("RoutineRequestService", () => {
     // decisions and the proposal never applies.
     clock.now = scheduledAt - 60_000;
     const expired = "This routine request expired before it was confirmed. Ask for a fresh proposal.";
-    expect(service.resolve({ botId: "bot-a", threadId: "thread-a", requestId: proposal.requestId, behavior: "allow" }))
+    expect(await service.resolve({ botId: "bot-a", threadId: "thread-a", requestId: proposal.requestId, behavior: "allow" }))
       .toEqual({ claimed: true, state: "invalid", error: expired, status: 409 });
-    expect(service.resolve({ botId: "bot-a", threadId: "thread-a", requestId: proposal.requestId, behavior: "deny" }))
+    expect(await service.resolve({ botId: "bot-a", threadId: "thread-a", requestId: proposal.requestId, behavior: "deny" }))
       .toEqual({ claimed: true, state: "invalid", error: expired, status: 409 });
     expect(routines.listRoutines()[0]!.schedule.type).toBe("daily");
     const card = store.messagesFor("thread-a")[0]!.card!;
@@ -1581,7 +1583,7 @@ describe("RoutineRequestService", () => {
       proposal: { action: "resume", routineId: routine.id },
     });
     clock.now = future + 1;
-    expect(service.resolve({
+    expect(await service.resolve({
       botId: "bot-a",
       threadId: "thread-a",
       requestId: proposal.requestId,
@@ -1618,7 +1620,7 @@ describe("RoutineRequestService", () => {
     });
     clock.now = end + 1;
 
-    expect(service.resolve({
+    expect(await service.resolve({
       botId: "bot-a",
       threadId: "thread-a",
       requestId: proposal.requestId,
@@ -1651,7 +1653,7 @@ describe("cross-bot routine targeting", () => {
     const store = new MemoryStore();
     const service = new RoutineRequestService({
       store,
-      routines,
+      routines: Object.assign(routines, { nextOccurrence: scheduleNextOccurrence }),
       now: () => clock.now,
       timeZone: () => "Asia/Kolkata",
       validateTarget,
@@ -1673,7 +1675,7 @@ describe("cross-bot routine targeting", () => {
     expect(card?.subtitle).toContain("engine and permissions");
     expect(card?.routineRequest?.operation).toMatchObject({ action: "create", forBot: forOps.forBot });
 
-    const result = service.resolve({
+    const result = await service.resolve({
       botId: "bot-a",
       threadId: "thread-a",
       requestId: proposed.requestId,
@@ -1688,7 +1690,7 @@ describe("cross-bot routine targeting", () => {
   it("still schedules for the proposer when no target is named", async () => {
     const { routines, service } = targetedHarness();
     const proposed = await service.propose({ botId: "bot-a", threadId: "thread-a", proposal: createProposal() });
-    service.resolve({ botId: "bot-a", threadId: "thread-a", requestId: proposed.requestId, behavior: "allow" });
+    await service.resolve({ botId: "bot-a", threadId: "thread-a", requestId: proposed.requestId, behavior: "allow" });
     expect(routines.listRoutines()[0]?.botId).toBe("bot-a");
   });
 
@@ -1710,7 +1712,7 @@ describe("cross-bot routine targeting", () => {
       proposal: { ...createProposal(), ...forOps },
     });
     gone = true;
-    const result = service.resolve({
+    const result = await service.resolve({
       botId: "bot-a",
       threadId: "thread-a",
       requestId: proposed.requestId,
@@ -1744,7 +1746,7 @@ describe("cross-bot routine targeting", () => {
     const card = store.messagesFor("thread-a")[0]?.card;
     expect(card?.title).toContain("for @Ops");
     expect(card?.routineRequest?.operation).toMatchObject({ action: "pause", forBot: forOps.forBot });
-    expect(service.resolve({
+    expect(await service.resolve({
       botId: "bot-a",
       threadId: "thread-a",
       requestId: proposed.requestId,
@@ -1764,7 +1766,7 @@ describe("cross-bot routine targeting", () => {
         forBot: forOps.forBot,
       },
     });
-    expect(service.resolve({
+    expect(await service.resolve({
       botId: "bot-a",
       threadId: "thread-a",
       requestId: updated.requestId,
@@ -1821,7 +1823,7 @@ describe("cross-bot routine targeting", () => {
       proposal: { action: "pause", routineId: peerRoutine.id, forBot: forOps.forBot },
     });
     reachable = false;
-    const result = service.resolve({
+    const result = await service.resolve({
       botId: "bot-a",
       threadId: "thread-a",
       requestId: proposed.requestId,
@@ -1847,7 +1849,7 @@ describe("cross-bot routine targeting", () => {
       proposal: { action: "pause", routineId: peerRoutine.id, forBot: forOps.forBot },
     });
     routines.update(peerRoutine.id, { name: "Renamed under the card" });
-    const result = service.resolve({
+    const result = await service.resolve({
       botId: "bot-a",
       threadId: "thread-a",
       requestId: proposed.requestId,

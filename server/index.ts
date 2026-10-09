@@ -452,7 +452,14 @@ import { LocalVmSeatPool, type LocalVmSeatHolder } from "./local-vm-seat-pool.ts
 import { RepeatDetector, callKey } from "./repeat-detector.ts";
 import { redactSecretsInText } from "./redact.ts";
 import * as vps from "./vps-computer.ts";
-import { RoutineManager, type RoutineRun, type RoutineRunOn, type RoutineRunTrigger } from "./routines.ts";
+import type { Routine, RoutineRun, RoutineRunOn, RoutineRunTrigger } from "./routines.ts";
+import {
+  jacEnabled, jacRoutines, jacUnavailable, jacUnavailableReason, startJacRoutines, stopJacHarness,
+  jacBridgeToken, mirrorApplyFrame, mirrorListRoutines, mirrorListRuns, mirrorRun,
+  mirrorRunForThread, mirrorIsActiveThread,
+  mirrorActiveRunForBot, mirrorPackageStamps, mirrorBusy,
+  ensureJacHarness,
+} from "./jac-routines.ts";
 import { CalendarCallManager, type CalendarCall } from "./calendar-calls.ts";
 import { BUILT_IN_BROWSER_SYSTEM_PROMPT } from "./browser-engine.ts";
 import { BrowserRuntime, browserRuntimeEnv } from "./browser-runtime.ts";
@@ -993,7 +1000,7 @@ function cloudLendingView(capability: Pick<InternalCapability, "botId" | "thread
 function cloudReportFromOthers(line: Message): boolean {
   if (line.webhookPost) return true;
   if (line.kind !== "routine.run" || !line.routineRun) return false;
-  const routine = routines?.listRoutines().find((candidate) => candidate.id === line.routineRun!.routineId);
+  const routine = mirrorListRoutines().find((candidate) => candidate.id === line.routineRun!.routineId);
   return !routine || cloudRoutineAuthors?.authored(routine.id, routine) !== true;
 }
 
@@ -1093,16 +1100,26 @@ function actorKey(auth: RequestAuth & { kind: "session" }): string {
 /** On a Cloud home: whoever is writing a routine in this request (routine
  * creation and edits can open its results conversation). */
 let routineWriterInFlight: string | undefined;
-function withRoutineWriter<T>(writer: string, work: () => T): T {
-  const previous = routineWriterInFlight;
-  routineWriterInFlight = writer;
-  try { return work(); } finally { routineWriterInFlight = previous; }
+// Async and serialized: the writer context is read back inside the Jac
+// create/update op's bridge calls (create_task opens the results
+// conversation as its writer), and one request must not hold it across a
+// concurrent write's op. Jac ops serialize too, so a FIFO here cannot
+// interleave writers.
+let routineWriterQueue: Promise<unknown> = Promise.resolve();
+function withRoutineWriter<T>(writer: string, work: () => Promise<T> | T): Promise<T> {
+  const run = routineWriterQueue.then(() => {
+    const previous = routineWriterInFlight;
+    routineWriterInFlight = writer;
+    return Promise.resolve().then(work).finally(() => { routineWriterInFlight = previous; });
+  });
+  routineWriterQueue = run.then(() => undefined, () => undefined);
+  return run;
 }
 /** On a Cloud home: a routine the owner approved (its card, or a proposal
  * applied at once in their own Full-access conversation) is theirs as it
  * stands: their key as its writer, their fingerprint on it. */
 function cloudOwnersRoutine(routineId: string | undefined): void {
-  const routine = routineId ? routines?.listRoutines().find((candidate) => candidate.id === routineId) : undefined;
+  const routine = routineId ? mirrorListRoutines().find((candidate) => candidate.id === routineId) : undefined;
   if (!routine || !cloudRoutineAuthors || !CLOUD_OWNER_KEY) return;
   cloudRoutineAuthors.record(routine.id, routine);
   cloudRoutineAuthors.wrote(routine.id, CLOUD_OWNER_KEY);
@@ -1112,7 +1129,7 @@ function cloudOwnersRoutine(routineId: string | undefined): void {
  * fingerprint matches what it runs, or they are its writer and no
  * fingerprint of theirs was ever recorded (a template, a restore). */
 function cloudRoutineIsOwners(routineId: string | undefined): boolean {
-  const routine = routineId ? routines?.listRoutines().find((candidate) => candidate.id === routineId) : undefined;
+  const routine = routineId ? mirrorListRoutines().find((candidate) => candidate.id === routineId) : undefined;
   if (!routine || !cloudRoutineAuthors || !CLOUD_OWNER_KEY) return false;
   return cloudRoutineAuthors.authored(routine.id, routine) ||
     (cloudRoutineAuthors.writer(routine.id) === CLOUD_OWNER_KEY && !cloudRoutineAuthors.recorded(routine.id));
@@ -1125,7 +1142,7 @@ function cloudRoutineIsOwners(routineId: string | undefined): boolean {
  * approval, a template, a restore) can't clear itself or others this way. */
 function cloudRoutineRunIsOwners(run: RoutineRun | null | undefined, botId: string, threadId: string): boolean {
   if (!run || run.threadId !== threadId || store.taskByThread(botId, threadId)?.routineRunId !== run.id || !cloudRoutineAuthors) return false;
-  const routine = routines?.listRoutines().find((candidate) => candidate.id === run.routineId);
+  const routine = mirrorListRoutines().find((candidate) => candidate.id === run.routineId);
   return Boolean(routine) && cloudRoutineAuthors.authored(run.routineId, {
     ...routine!, prompt: run.prompt, target: run.target, botId: run.botId, groupId: run.groupId, attachments: run.attachments, runOn: run.runOn,
   }) === true;
@@ -1156,7 +1173,7 @@ function approvalShape(shape: { prompt?: string; botId?: string; runOn?: string;
  * writer, else nobody. */
 function routineOpener(routineId: string): string {
   if (routineWriterInFlight) return routineWriterInFlight;
-  const routine = routines?.listRoutines().find((candidate) => candidate.id === routineId);
+  const routine = routineId ? mirrorListRoutines().find((candidate) => candidate.id === routineId) : undefined;
   if (routine && CLOUD_OWNER_KEY && cloudRoutineAuthors?.authored(routineId, routine)) return CLOUD_OWNER_KEY;
   const writer = cloudRoutineAuthors?.writer(routineId);
   if (writer && CLOUD_OWNER_KEY && writer === CLOUD_OWNER_KEY) return CLOUD_OWNER_KEY;
@@ -1478,11 +1495,11 @@ function subjectVisible(subject: PathSubject, visible: VisibleSet): boolean {
     case "group":
       return !store.group(subject.id) || visible.group(subject.id);
     case "routine": {
-      const routine = routines?.listRoutines().find((candidate) => candidate.id === subject.id);
+      const routine = mirrorListRoutines().find((candidate) => candidate.id === subject.id);
       return !routine || routineVisible(routine, visible);
     }
     case "routine-run": {
-      const run = routines?.listRuns().find((candidate) => candidate.id === subject.id);
+      const run = mirrorListRuns().find((candidate) => candidate.id === subject.id);
       return !run || routineVisible(run, visible);
     }
     case "attachment":
@@ -3647,7 +3664,7 @@ function starterNotes(botId: string): Array<{ path: string; text: string }> {
 function packageImportDeps(selection: ModelSelection): PackageImportDeps {
   return {
     store,
-    routines: routines!,
+    routines,
     skills: { install: installSkill, setEnabled: setSkillEnabled, installOrg: installOrgSkill },
     memory: { writeIndex: writeMemoryFile, writeTopic: writeMemoryTopic },
     mcp: { servers: () => cfg.mcpServers ?? {}, refusal: mcpPolicyRefusal, persist: persistMcpServers },
@@ -3965,7 +3982,7 @@ async function botOverview(bot: BotRecord): Promise<BotOverview> {
       chiefOfStaff: bot.chiefOfStaff,
       managedSections: bot.managedSections,
     },
-    routines: routines!.listRoutines()
+    routines: (await routines.listRoutines())
       .filter((routine) => routine.botId === bot.id)
       .map((routine) => ({
         id: routine.id,
@@ -3974,7 +3991,7 @@ async function botOverview(bot: BotRecord): Promise<BotOverview> {
         schedule: routine.schedule,
         nextRunAt: routine.nextRunAt,
       })),
-    runs: routines!.listRuns()
+    runs: (await routines.listRuns())
       .filter((run) => run.botId === bot.id)
       .map((run) => ({
         routineId: run.routineId,
@@ -4675,7 +4692,7 @@ function createChannel(value: unknown): GroupRecord {
   return store.createGroup(name, memberIds, false, section, setup ?? (deciderReady(cfg, "roomRouting") ? { defaultResponder: { kind: "auto" } } : undefined));
 }
 
-function updateChannel(groupId: string, value: unknown): GroupRecord {
+async function updateChannel(groupId: string, value: unknown): Promise<GroupRecord> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw Object.assign(new Error("body must be a JSON object"), { status: 400 });
   }
@@ -4718,13 +4735,13 @@ function updateChannel(groupId: string, value: unknown): GroupRecord {
     if (!roster.ok) throw Object.assign(new Error(roster.error.replace("channel", "room")), { status: 400 });
     const audienceConflict = roomAudienceConflict(roster.memberIds, existing.memberIds);
     if (audienceConflict) throw Object.assign(new Error(audienceConflict), { status: 400 });
-    const removedGoalLead = routines!.listRoutines().some(
+    const removedGoalLead = (await routines.listRoutines()).some(
       (routine) =>
         routine.enabled &&
         routine.target === "room-goal" &&
         routine.groupId === existing.id &&
         !roster.memberIds.includes(routine.botId),
-    ) || routines!.listRuns().some(
+    ) || (await routines.listRuns()).some(
       (run) =>
         run.target === "room-goal" &&
         run.groupId === existing.id &&
@@ -5111,42 +5128,47 @@ function finishGroupGoalRun(
   };
   // A calendar-triggered team goal reuses its RoutineRun id for this card.
   // Manual goals have unrelated ids, so the manager safely ignores them.
-  const routineRun = routines?.finishGoalRun(run.runId, status, safeDetail);
-  if (routineRun?.status === "cancelled") {
-    pendingDelegationWakes.delete(operation.threadId);
-    discardDelegations(commsBus, operation.threadId);
-  }
-  // Member-level turn completions are intentionally private/intermediate for
-  // a team goal, so the normal direct-routine notification path never fires.
-  // Notify once from the correlated terminal receipt instead.
-  // A scheduled team goal that stops to ask is the one outcome a person
-  // most needs to hear about — it must never be filed as a quiet completion.
-  if (routineRun?.status === "waiting") {
-    const coordinator = store.bot(routineRun.botId);
-    if (coordinator) {
-      const notificationBot = routineSourceOwner(routineRun)?.bot ?? coordinator;
-      notify(buildNotification(
-        "question",
-        notificationBot,
-        routineSourceThread(routineRun) ?? routineRun.threadId ?? operation.threadId,
-        safeDetail || `${routineRun.routineName} needs your input`,
-        { avatarUrl: notificationBot.avatarUrl },
-      ));
+  // The run's terminal receipt lives in Jac now; settling it is an op, so
+  // the cleanup and notifications keyed off its final status follow it.
+  void routines.finishGoalRun(run.runId, status, safeDetail).then((routineRun) => {
+    if (routineRun?.status === "cancelled") {
+      pendingDelegationWakes.delete(operation.threadId);
+      discardDelegations(commsBus, operation.threadId);
     }
-  }
-  if (routineRun?.status === "completed") {
-    const coordinator = store.bot(routineRun.botId);
-    if (coordinator) {
-      const notificationBot = routineSourceOwner(routineRun)?.bot ?? coordinator;
-      notify(buildNotification(
-        "done",
-        notificationBot,
-        routineSourceThread(routineRun) ?? routineRun.threadId ?? operation.threadId,
-        safeDetail || routineRun.routineName,
-        { avatarUrl: notificationBot.avatarUrl },
-      ));
+    // Member-level turn completions are intentionally private/intermediate for
+    // a team goal, so the normal direct-routine notification path never fires.
+    // Notify once from the correlated terminal receipt instead.
+    // A scheduled team goal that stops to ask is the one outcome a person
+    // most needs to hear about — it must never be filed as a quiet completion.
+    if (routineRun?.status === "waiting") {
+      const coordinator = store.bot(routineRun.botId);
+      if (coordinator) {
+        const notificationBot = routineSourceOwner(routineRun)?.bot ?? coordinator;
+        notify(buildNotification(
+          "question",
+          notificationBot,
+          routineSourceThread(routineRun) ?? routineRun.threadId ?? operation.threadId,
+          safeDetail || `${routineRun.routineName} needs your input`,
+          { avatarUrl: notificationBot.avatarUrl },
+        ));
+      }
     }
-  }
+    if (routineRun?.status === "completed") {
+      const coordinator = store.bot(routineRun.botId);
+      if (coordinator) {
+        const notificationBot = routineSourceOwner(routineRun)?.bot ?? coordinator;
+        notify(buildNotification(
+          "done",
+          notificationBot,
+          routineSourceThread(routineRun) ?? routineRun.threadId ?? operation.threadId,
+          safeDetail || routineRun.routineName,
+          { avatarUrl: notificationBot.avatarUrl },
+        ));
+      }
+    }
+  }).catch((error: unknown) => {
+    console.error(`routines: could not settle goal run ${run.runId}:`, error instanceof Error ? error.message : String(error));
+  });
   const group = store.group(groupId);
   const ownsThread = group?.dm
     ? group.threadId === operation.threadId
@@ -5442,10 +5464,11 @@ store.onChange((change) => {
       break;
     case "thread.deleted":
       directRequestOwners.delete(change.threadId);
-      routines?.forgetRoutineRequestReceiptsForThread(change.threadId);
+      void routines.forgetRoutineRequestReceiptsForThread(change.threadId)
+        .catch((error: unknown) => console.error("routines: forget receipts failed:", error));
       // A deleted destination must not strand an approval in an internal
       // task. Keep each run's snapshot and expose its execution as fallback.
-      for (const run of routines?.listRuns() ?? []) {
+      for (const run of mirrorListRuns()) {
         if (run.resultsThreadId === change.threadId || run.sourceThreadId === change.threadId) {
           syncRoutineRunToSource(run);
         }
@@ -6098,7 +6121,7 @@ const watchdog = new TurnWatchdog({
     void runningTurnInstance(bot, turn.threadId)?.adapter.interruptTurn(turn.threadId).catch(() => {});
     const minutes = Math.round(TURN_STALL_MS / 60_000);
     if (routineRun?.target === "bot") {
-      routines?.failThread(turn.threadId, `No activity for ${minutes} minutes — the routine was stopped`);
+      routines.detached.failThread(turn.threadId, `No activity for ${minutes} minutes — the routine was stopped`);
       pendingDelegationWakes.delete(turn.threadId);
       discardDelegations(commsBus, turn.threadId);
     }
@@ -6302,7 +6325,7 @@ bus.subscribe((event: RuntimeEvent) => {
   try {
     const bot = store.botByThread(event.threadId);
     if (!bot || !upkeepEnabled(bot) || store.groupByThread(event.threadId) || isInternalTurn(event.threadId)
-      || isUnattended(bot.id, event.threadId) || routines?.runForThread(event.threadId)) return;
+      || isUnattended(bot.id, event.threadId) || mirrorRunForThread(event.threadId)) return;
     // On a Cloud home the bot's memory reaches its owner's turns (and a lent
     // Mac): nothing is captured from a conversation anyone else wrote in.
     if (CLOUD_HOME && !cloudOwnerOnlyThread(event.threadId)) return;
@@ -6603,7 +6626,10 @@ function isInternalTurn(threadId: string): boolean {
 // a peer hop, or a resumed card records nothing here: the user message
 // such a turn finds in its thread may be hours old and its author gone.
 const personAskAt = new Map<string, number>();
-let routines: RoutineManager | null = null;
+// The Jac seam (server/jac-routines.ts) is the only routines surface now:
+// facade methods are async, synchronous decision sites read the emit-fed
+// mirror helpers instead. `routines` stays the name every call site uses.
+const routines = jacRoutines;
 let calendarCalls: CalendarCallManager | null = null;
 const localVmOwnerBusy = (botId: string) => store.bot(botId)?.busy === true;
 const localVmLeases = new LocalVmLeasePool(30 * 60_000);
@@ -6760,7 +6786,7 @@ function teamComputerInUse(computer: TeamComputerRecord): boolean {
   return computerControl.snapshot(teamComputerOwner(computer.id)).held ||
     [...teamComputerTurns.values()].some(turn => turn.computerId === computer.id) ||
     store.bots.some(bot => computer.section !== null && sectionKey(bot.section) === computer.section && (
-      botHasActiveTurn(bot.id) || Boolean(routines?.activeRunForBot(bot.id)) || computerControl.snapshot(bot.id).held
+      botHasActiveTurn(bot.id) || Boolean(mirrorActiveRunForBot(bot.id)) || computerControl.snapshot(bot.id).held
     ));
 }
 
@@ -6774,7 +6800,7 @@ function assertTeamComputerChangeIdle(before: BotRecord, after: BotRecord): void
   const previous = inheritedTeamComputer(before);
   const next = inheritedTeamComputer(after);
   if (previous?.id === next?.id) return;
-  if (botHasActiveTurn(before.id) || routines?.activeRunForBot(before.id) || botComputerControlSnapshot(before.id).held ||
+  if (botHasActiveTurn(before.id) || mirrorActiveRunForBot(before.id) || botComputerControlSnapshot(before.id).held ||
       [previous, next].some(computer => computer && (teamComputerInUse(computer) || boatLifecycleBusyBots.has(teamComputerOwner(computer.id))))) {
     throw Object.assign(new Error("Stop the affected team's work and release computer control before changing its computer access"), { status: 409 });
   }
@@ -7053,7 +7079,7 @@ function managedBoatOwners(): boat.ManagedBoatOwner[] {
       bot.busy === true ||
       hasDirectDispatch(bot.id) ||
       activeGroupTurnForBot(bot.id) !== null ||
-      Boolean(routines?.activeRunForBot(bot.id)) ||
+      Boolean(mirrorActiveRunForBot(bot.id)) ||
       activeVpsThreads.has(bot.id) ||
       computerControl.snapshot(bot.id).held,
   })), ...teamComputers.list().map(computer => ({
@@ -7477,7 +7503,12 @@ async function localVmInventoryPayload() {
   return { instances, maxInstances: localVmMaxInstances(cfg), available: true, problem: null };
 }
 
-bus.subscribe((event: RuntimeEvent) => {
+// Serialized, not merely async: handleRuntimeEvent is a Jac op now, and an
+// unserialized async subscriber would let a later event's work interleave
+// into this handler's earlier writes. Chaining preserves the previous
+// handler-runs-to-completion ordering exactly.
+let runtimeEventChain: Promise<void> = Promise.resolve();
+const handleRuntimeEvent = async (event: RuntimeEvent): Promise<void> => {
   if (shouldIgnoreProviderEvent(event)) return;
   const localVmTarget = localVmThreadTargets.get(event.threadId);
   if (localVmTarget) {
@@ -7545,7 +7576,12 @@ bus.subscribe((event: RuntimeEvent) => {
     const publicEvent = event.type === "request.opened" ? { ...event, command: undefined } : event;
     broadcast({ kind: "runtime", event: publicEvent });
   }
-  const routineRun = privateImageEvent ? null : (routines?.handleRuntimeEvent(event) ?? null);
+  // An unreachable harness reads like "no routine owns this event": the
+  // rest of turn bookkeeping must still run, and the mirror keeps serving.
+  const routineRun = privateImageEvent ? null : (await routines.routineRuntimeEvent(event as unknown as Record<string, unknown>).catch((error: unknown) => {
+    if (jacEnabled()) console.error("routines: runtime event op failed:", error instanceof Error ? error.message : String(error));
+    return null;
+  }));
   const ownerBot = store.botByThread(event.threadId);
   const bot = ownerBot ? botForThread(ownerBot.id, event.threadId) ?? undefined : undefined;
   const group = bot ? undefined : store.groupByThread(event.threadId);
@@ -7986,7 +8022,7 @@ bus.subscribe((event: RuntimeEvent) => {
         turnResourceOwners.get(event.threadId)?.lazyClaimFailureReported === true;
       const computerParked = event.stopReason === "exit_before_result" &&
         turnResourceOwners.get(event.threadId)?.computerParkedOn !== undefined;
-      if (!event.ok && event.stopReason !== "interrupted" && !lazyClaimAlreadyReported && !computerParked && !routines?.runForThread(event.threadId)) {
+      if (!event.ok && event.stopReason !== "interrupted" && !lazyClaimAlreadyReported && !computerParked && !mirrorRunForThread(event.threadId)) {
         const broken = bot ?? (speaker ? store.bot(speaker.botId) : undefined);
         if (broken) reportIncident({ kind: "failed", bot: broken, threadId: event.threadId, detail: event.stopReason?.trim() || "the run ended without a result" });
       }
@@ -8199,6 +8235,14 @@ bus.subscribe((event: RuntimeEvent) => {
       break;
     }
   }
+};
+bus.subscribe((event: RuntimeEvent) => {
+  runtimeEventChain = runtimeEventChain.then(
+    () => handleRuntimeEvent(event),
+    () => handleRuntimeEvent(event),
+  ).catch((error: unknown) => {
+    console.error("routines: runtime event handling failed:", error instanceof Error ? error.message : String(error));
+  });
 });
 
 /** A delegated turn's terminal state belongs in the A⇄B channel:
@@ -8281,7 +8325,7 @@ const delegationWakeBudget = new DelegationWakeBudget();
 const pendingDelegationWakes = new Map<string, { botId: string; targetName: string; failureReason?: string; routineRunId?: string; budgetAcquired?: boolean }>();
 
 function activeRoutineRunForThread(threadId: string): RoutineRun | null {
-  const run = routines?.runForThread(threadId);
+  const run = mirrorRunForThread(threadId);
   return run && ["running", "waiting"].includes(run.status) ? run : null;
 }
 
@@ -8293,7 +8337,7 @@ function dispatchDelegationWake(botId: string, threadId: string, targetName: str
   if (!store.taskByThread(botId, threadId)) return;
   if (!routineDelegationCanResume(threadId, routineRunId)) return;
   if (!budgetAcquired && !delegationWakeBudget.tryAcquire(threadId)) {
-    routines?.failThread(threadId, "Delegation follow-up limit reached; review the run before retrying");
+    routines.detached.failThread(threadId, "Delegation follow-up limit reached; review the run before retrying");
     return;
   }
   const prompt = failureReason
@@ -8319,7 +8363,7 @@ function dispatchDelegationWake(botId: string, threadId: string, targetName: str
         kind: "activity",
         tool: failedTurnTool(`could not resume after delegation — ${message}`),
       });
-      routines?.failThread(threadId, `Could not resume after delegation: ${message}`);
+      routines.detached.failThread(threadId, `Could not resume after delegation: ${message}`);
     });
 }
 
@@ -9581,7 +9625,7 @@ async function startTurn(
       runOn: continuingRoutine.runOn,
       automationSource: continuingRoutine.triggerSource ?? (continuingRoutine.manual ? "manual" : "schedule"),
       onDispatchError: (message) => {
-        routines?.failThread(threadId, message);
+        routines.detached.failThread(threadId, message);
         onDispatchError?.(message);
       },
     };
@@ -11210,11 +11254,11 @@ async function stopBotForEmergencyApprovalDowngrade(botId: string): Promise<void
   }
   const directStop = interruptAllDirectThreads(botId);
 
-  const routineRun = routines?.activeBotRunForBot(bot.id);
+  const routineRun = await routines.activeBotRunForBot(bot.id);
   if (routineRun) {
     if (routineRun.threadId) revokeInternalCapabilitiesForThread(routineRun.threadId);
     cancelDirectTurnDispatch(bot.id, routineRun.threadId);
-    await routines!.cancelRun(routineRun.id);
+    await routines.cancelRun(routineRun.id);
     if (routineRun.threadId) closeOpenApprovals(routineRun.threadId);
     await directStop;
     return;
@@ -11248,29 +11292,71 @@ const commsBus: CommsBus = {
 };
 _loadPending();
 
-routines = new RoutineManager({
-  emit: broadcast,
-  hasPendingDelegations: (threadId) => pendingThreads().includes(threadId) ||
-    [...delegationWatch.values()].some((watch) => watch.sourceThreadId === threadId) ||
-    pendingDelegationWakes.has(threadId),
-  botState: unattendedDispatchState,
-  goalState: (groupId, coordinatorBotId) => {
+// ── Jac → node bridge ops (server/jac-routines.ts) ─────────────────────────
+// The routines scheduler lives in the Jac harness now; each callback the
+// RoutineManager options carried is one bridge op, dispatched by
+// /api/internal/routine-bridge (token-gated). Bodies are preserved verbatim
+// from the options object. Payload field names are the wire names the Jac
+// side sends (camelCase — see jac/harness/routines.jac's _bridge calls); a
+// couple also accept the contract's snake_case spelling. These payloads are
+// trusted in-process RPC, not external input: field casts below are
+// unchecked and deliberate.
+type BridgePayload = Record<string, unknown>;
+const bridgeString = (value: unknown): string => typeof value === "string" ? value : "";
+// Jac and the phase-2 contract disagree on two spellings; take either.
+const field = (payload: BridgePayload, ...names: string[]): unknown =>
+  names.map((name) => payload[name]).find((value) => value !== undefined);
+const bridgeRun = (payload: BridgePayload): RoutineRun => payload.run as RoutineRun;
+const routineBridgeOps: Record<string, (payload: BridgePayload) => unknown> = {
+  // Mirror first: the bridge handler is inside an in-flight op and may not
+  // re-enter the serialized op queue (server/jac-routines.ts).
+  emit: (payload) => { const frame = payload.payload as Record<string, unknown>; mirrorApplyFrame(frame); broadcast(frame); return { ok: true }; },
+  has_pending_delegations: (payload) => {
+    // Jac sends the requester's own thread as `thread_id`; a standing
+    // external runtime sends excludeThreadId. Both mean "not mine".
+    const excluded = bridgeString(field(payload, "excludeThreadId", "exclude_thread_id", "thread_id"));
+    const groupId = bridgeString(payload.groupId);
+    const scope = new Set<string>(pendingThreads());
+    if (groupId) {
+      const group = store.group(groupId);
+      for (const task of group?.tasks ?? []) scope.add(task.threadId);
+      if (group && !group.dm) scope.add(store.group(groupId)!.threadId);
+      else if (group) scope.add(group.threadId);
+    }
+    const pending = [...scope].filter((threadId) => threadId && threadId !== excluded && (
+      pendingThreads().includes(threadId) ||
+      [...delegationWatch.values()].some((watch) => watch.sourceThreadId === threadId) ||
+      pendingDelegationWakes.has(threadId)
+    ));
+    return { count: pending.length, pending: pending.length > 0 };
+  },
+  bot_state: (payload) => {
+    const state = unattendedDispatchState(bridgeString(payload.botId));
+    return { state, exists: state !== "missing", busy: state === "busy" };
+  },
+  goal_state: (payload) => {
+    const groupId = bridgeString(payload.groupId);
+    const coordinatorBotId = bridgeString(field(payload, "coordinatorBotId", "coordinator_bot_id"));
     const group = store.group(groupId);
-    const coordinator = store.bot(coordinatorBotId);
+    const coordinator = coordinatorBotId ? store.bot(coordinatorBotId) : undefined;
+    let state: "ready" | "busy" | "missing";
     if (
       !group ||
       group.dm ||
       roomSetupPending(group) ||
-      !coordinator ||
-      coordinator.hidden ||
-      !group.memberIds.includes(coordinator.id)
+      (coordinatorBotId ? (!coordinator || coordinator.hidden || !group.memberIds.includes(coordinator.id)) : false)
     ) {
-      return "missing";
+      state = "missing";
+    } else {
+      state = groupIsWorking(group) || (coordinator?.busy ?? false) ? "busy" : "ready";
     }
-    return groupIsWorking(group) || coordinator.busy ? "busy" : "ready";
+    return { state, exists: state !== "missing", busy: state === "busy" };
   },
-  createTask: (botId, title, activate = false, run) => {
-    const task = store.createTask(botId, title, activate);
+  create_task: (payload) => {
+    const botId = bridgeString(payload.botId);
+    const title = bridgeString(field(payload, "title", "name"));
+    const run = payload.run as RoutineRun | undefined;
+    const task = store.createTask(botId, title, payload.activate === true);
     // On a Cloud home a run's conversation is opened, like its results
     // conversation, by whoever wrote the routine: a run of one that is
     // nobody's is confined to a folder of its own, never the bot's project.
@@ -11285,61 +11371,123 @@ routines = new RoutineManager({
     // background leaves the open thread alone, so that frame carries no
     // transcript: a whole thread on every scheduled run once passed the phone
     // sidecar's 4 MiB event ceiling and ended the stream (MOCA-179).
-    return task;
+    return { threadId: task?.threadId ?? null };
   },
-  joinConversation: (run) => {
-    if (!routinesInConversationEnabled(cfg) || run.target !== "bot") return null;
+  join_conversation: (payload) => {
+    const run = bridgeRun(payload);
+    if (!routinesInConversationEnabled(cfg) || run.target !== "bot") return { threadId: null };
     const source = routineSourceOwner(run);
     // Only this bot's own visible chat. A room, or a teammate's thread, keeps
     // the detached run so one bot cannot write its work into the wrong place.
-    if (!source || source.group || source.bot.id !== run.botId) return null;
-    return source.threadId;
+    if (!source || source.group || source.bot.id !== run.botId) return { threadId: null };
+    return { threadId: source.threadId };
   },
-  createGoalTask: (groupId, title) => store.createGroupTask(groupId, title, false),
-  isResultsThread: (botId, threadId) => {
+  // The Jac side passes a routine's stored source reference as messageId;
+  // only a real message id resolves to its conversation.
+  join_thread_id: (payload) => {
+    const messageId = bridgeString(payload.messageId);
+    if (!messageId || ["schedule", "manual", "webhook"].includes(messageId)) return { threadId: null };
+    for (const bot of store.bots) {
+      for (const task of store.tasks(bot.id)) {
+        if (store.messagesFor(task.threadId).some((message) => message.id === messageId)) {
+          return { threadId: task.threadId };
+        }
+      }
+    }
+    return { threadId: null };
+  },
+  create_goal_task: (payload) => {
+    const task = store.createGroupTask(bridgeString(payload.groupId), bridgeString(payload.title), false);
+    return { threadId: task?.threadId ?? null };
+  },
+  is_results_thread: (payload) => {
+    const bot = store.bot(bridgeString(payload.botId));
+    const task = store.taskByThread(bridgeString(payload.botId), bridgeString(payload.threadId));
+    return { ok: Boolean(bot && !bot.hidden && task && !task.routineRunId) };
+  },
+  resolve_results_thread: (payload) => {
+    // The wire carries (botId, threadId): confirm a stored results
+    // destination still resolves, else null so the run re-dispatches on a
+    // fresh thread. A `routine` payload uses the full resolver.
+    const routine = payload.routine as Routine | undefined;
+    if (routine) {
+      const bot = store.bot(routine.botId);
+      const forceNew = payload.forceNew === true || payload.force_new === true;
+      // Same body as the former resolveResultsThread option.
+      const chosen = !forceNew && routine.resultsThreadId && bot && !bot.hidden
+        ? store.taskByThread(bot.id, routine.resultsThreadId) : undefined;
+      const opener = CLOUD_HOME ? routineOpener(routine.id) : undefined;
+      const main = bot && !bot.hidden ? botMainThread(bot.id) : undefined;
+      const mainAllowed = main && (!CLOUD_HOME || (opener === CLOUD_OWNER_KEY && !cloudGuestOpened(main)));
+      const keepChosen = chosen && !chosen.routineRunId && !(mainAllowed && legacyResultsThread(routine.name, chosen));
+      if (keepChosen) return { threadId: chosen.threadId };
+      if (mainAllowed || !CLOUD_HOME) return { threadId: main ?? null };
+      const created = store.createTask(routine.botId, `${routine.name} · Results`, false)?.threadId;
+      if (created) threadStarters.set(created, opener!);
+      return { threadId: created ?? null };
+    }
+    const botId = bridgeString(payload.botId);
+    const threadId = bridgeString(payload.threadId);
     const bot = store.bot(botId);
-    const task = store.taskByThread(botId, threadId);
-    return Boolean(bot && !bot.hidden && task && !task.routineRunId);
+    const task = threadId ? store.taskByThread(botId, threadId) : undefined;
+    const group = threadId ? store.groupByThread(threadId) : undefined;
+    if (!bot && !group) return { threadId: null };
+    if (bot && (!bot.hidden && task)) return { threadId };
+    if (group && store.groupTaskByThread(group.id, threadId)) return { threadId };
+    return { threadId: null };
   },
-  resolveResultsThread: (routine, forceNew) => {
-    // Every run reports into the routine's bot's main thread, wherever the
-    // routine was made (chat, editor, API, or a teammate's request). A run
-    // still executes in its own hidden task, which Run logs and Open run use.
-    // A thread the person chose in "Post results to" keeps winning.
-    const bot = store.bot(routine.botId);
-    const chosen = !forceNew && routine.resultsThreadId && bot && !bot.hidden
-      ? store.taskByThread(bot.id, routine.resultsThreadId) : undefined;
-    // On a Cloud home a routine reports only where its writer may write: a
-    // guest's (or nobody's) keeps a results conversation opened as theirs.
-    const opener = CLOUD_HOME ? routineOpener(routine.id) : undefined;
-    const main = bot && !bot.hidden ? botMainThread(bot.id) : undefined;
-    const mainAllowed = main && (!CLOUD_HOME || (opener === CLOUD_OWNER_KEY && !cloudGuestOpened(main)));
-    const keepChosen = chosen && !chosen.routineRunId && !(mainAllowed && legacyResultsThread(routine.name, chosen));
-    if (keepChosen) return chosen.threadId;
-    if (mainAllowed || !CLOUD_HOME) return main;
-    const threadId = store.createTask(routine.botId, `${routine.name} · Results`, false)?.threadId;
-    if (threadId) threadStarters.set(threadId, opener!);
-    return threadId;
-  },
-  discardResultsThread: (botId, threadId) => {
+  discard_results_thread: (payload) => {
+    const botId = bridgeString(payload.botId);
+    const threadId = bridgeString(payload.threadId);
     const task = store.taskByThread(botId, threadId);
     // The main thread is reused, never allocated, so a failed write keeps it.
     if (task && threadId !== botMainThread(botId) && !task.busy && !task.routineRunId && store.messagesFor(threadId).length === 0) {
       store.deleteTask(botId, threadId);
       handoffs.forget(threadId);
     }
+    return { ok: true };
   },
-  startTurn: async (botId, threadId, prompt, runOn, triggerSource, onDispatchError) => {
-    await startTurn(botId, prompt, { threadId, runOn, automationSource: triggerSource, onDispatchError });
+  start_turn: async (payload) => {
+    let dispatchError: string | null = null;
+    try {
+      await startTurn(bridgeString(payload.botId), bridgeString(payload.prompt), {
+        threadId: bridgeString(payload.threadId),
+        runOn: payload.runOn as RoutineRunOn | undefined,
+        automationSource: (payload.triggerSource || payload.trigger_source || undefined) as RoutineRunTrigger | undefined,
+        onDispatchError: (message) => { dispatchError = message; },
+      });
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
+    return dispatchError
+      ? { ok: false, error: dispatchError }
+      : { ok: true, threadId: bridgeString(payload.threadId) };
   },
-  startGoal: async (groupId, threadId, prompt, coordinatorBotId, runId, _onDispatchError) => {
-    startGroupTurn(groupId, prompt, undefined, undefined, "goal", undefined, {
-      threadId,
-      goalCoordinatorBotId: coordinatorBotId,
-      goalRunId: runId,
-    });
+  start_goal: async (payload) => {
+    const groupId = bridgeString(payload.groupId);
+    const task = store.createGroupTask(groupId, bridgeString(payload.title) || bridgeString(payload.name), false);
+    const threadId = bridgeString(payload.threadId) || task?.threadId;
+    if (!threadId) return { ok: false, error: "no thread for the room goal" };
+    // The routine's bot is the coordinator. Jac sends runId (the run just
+    // emitted); accept an explicit coordinator bot id too.
+    const runId = bridgeString(payload.runId);
+    const coordinatorBotId =
+      bridgeString(field(payload, "coordinatorBotId", "coordinator_bot_id")) ||
+      mirrorRun(runId)?.botId || "";
+    try {
+      startGroupTurn(groupId, bridgeString(payload.prompt), undefined, undefined, "goal", undefined, {
+        threadId,
+        goalCoordinatorBotId: coordinatorBotId,
+        goalRunId: runId,
+      });
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
+    return { ok: true, threadId };
   },
-  interruptTurn: async (botId, threadId) => {
+  interrupt_turn: async (payload) => {
+    const threadId = bridgeString(payload.threadId);
+    const botId = bridgeString(payload.botId) || store.botByThread(threadId)?.id || "";
     const bot = botForThread(botId, threadId);
     pendingDelegationWakes.delete(threadId);
     discardDelegations(commsBus, threadId);
@@ -11350,39 +11498,79 @@ routines = new RoutineManager({
     } finally {
       closeOpenApprovals(threadId);
     }
+    return { ok: true };
   },
-  interruptGoal: interruptRoutineGroupGoal,
-  onRunChanged: syncRoutineRunToSource,
-  onRunFailed: (run) => {
+  interrupt_goal: async (payload) => {
+    await interruptRoutineGroupGoal(
+      bridgeString(payload.groupId),
+      bridgeString(payload.threadId),
+      payload.outcome as { status: "stopped" | "limit-reached"; detail: string } | undefined,
+    );
+    return { ok: true };
+  },
+  run_changed: (payload) => { syncRoutineRunToSource(bridgeRun(payload)); return { ok: true }; },
+  on_run_failed: (payload) => { routineBridgeOps.run_failed!(payload); return { ok: true }; },
+  run_failed: (payload) => {
+    const run = bridgeRun(payload);
     if (run.threadId) {
       pendingDelegationWakes.delete(run.threadId);
       discardDelegations(commsBus, run.threadId);
     }
     const bot = store.bot(run.botId);
-    if (!bot) return;
+    if (!bot) return { ok: true };
     const detail = run.error ? `${run.routineName}: ${run.error}` : run.routineName;
     const notificationBot = routineSourceOwner(run)?.bot ?? bot;
     notify(buildNotification("routine-failed", notificationBot, routineSourceThread(run) ?? run.threadId ?? bot.threadId, detail));
     reportIncident({ kind: "routine-failed", bot, threadId: run.threadId ?? bot.threadId, detail });
+    return { ok: true };
   },
-  onRunDeferred: (run) => {
+  run_deferred: (payload) => {
+    const run = bridgeRun(payload);
     const bot = store.bot(run.botId);
-    if (!bot) return;
+    if (!bot) return { ok: true };
     const minutes = run.deferredAt != null && run.deferredNoticeAt != null
       ? Math.max(1, Math.round((run.deferredNoticeAt - run.deferredAt) / 60_000))
       : null;
     const detail = `${redactSecretsInText(run.routineName)}: target busy${minutes != null ? ` for ${minutes} minutes` : ""}`;
     const notificationBot = routineSourceOwner(run)?.bot ?? bot;
     notify(buildNotification("routine-deferred", notificationBot, routineSourceThread(run) ?? bot.threadId, detail));
+    return { ok: true };
   },
-});
+};
+
+/** One bridge op; the route returns its result verbatim. Unknown ops and
+ * thrown errors surface as `{ok:false,error}` so Jac's _invoke mapping can
+ * fail the run rather than hang. */
+function routineBridgeOp(op: string, payload: BridgePayload): unknown {
+  const handler = routineBridgeOps[op];
+  if (!handler) return { ok: false, error: `unknown routine bridge op: ${op}` };
+  try {
+    const result = handler(payload);
+    // Jac reads snake_case reply keys (thread_id). Normalize the
+    // handlers' camelCase once at the boundary.
+    const reply = (value: unknown): unknown => {
+      if (value === null || typeof value !== "object" || Array.isArray(value)) return value;
+      const out: Record<string, unknown> = { ...(value as Record<string, unknown>) };
+      if (out.threadId !== undefined && out.thread_id === undefined) out.thread_id = out.threadId;
+      return out;
+    };
+    return Promise.resolve(result).then(reply).catch(
+      (error: unknown) => ({ ok: false, error: error instanceof Error ? error.message : String(error) }),
+    );
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+}
 // A Cloud home is personal (server/cloud-owner.ts): every stored session
 // without admin scope is revoked and what it opened or wrote is nobody's;
-// once (and after a restore) the earlier keys are settled. Before anything
-// is served, and before any routine can run.
-if (CLOUD_HOME && CLOUD_OWNER_KEY && cloudRoutineAuthors) {
+// once (and after a restore) the earlier keys are settled. This runs inside
+// finishRoutinesBringup: the Jac harness owns routines.json now, so the
+// settle reads its mirror and only make sense after boot's mirror refresh.
+function settleRoutinesCloudHome(): void {
+  if (!(CLOUD_HOME && CLOUD_OWNER_KEY && cloudRoutineAuthors)) return;
+  {
   const authors = cloudRoutineAuthors;
-  const routineById = (id: string) => routines?.listRoutines().find((routine) => routine.id === id);
+  const routineById = (id: string) => mirrorListRoutines().find((routine) => routine.id === id);
   cloudEarlierOwners = settleCloudOwnership({
     file: join(DATA_DIR, "cloud-owner.json"),
     machineId: CLOUD_HOME.machineId,
@@ -11393,13 +11581,13 @@ if (CLOUD_HOME && CLOUD_OWNER_KEY && cloudRoutineAuthors) {
     starters: threadStarters,
     writers: authors,
     routines: {
-      ids: () => (routines?.listRoutines() ?? []).map((routine) => routine.id),
+      ids: () => mirrorListRoutines().map((routine) => routine.id),
       writer: (id) => authors.writer(id),
       fingerprinted: (id) => { const routine = routineById(id); return Boolean(routine) && authors.authored(id, routine!); },
       resultsOpener: (id) => { const results = routineById(id)?.resultsThreadId; return results ? threadStarters.get(results) : undefined; },
       shape: (id) => { const routine = routineById(id); return routine ? approvalShape(routine) : undefined; },
       name: (id, person) => authors.wrote(id, person),
-      pause: (ids) => { for (const id of ids) routines?.update(id, { enabled: false }); },
+      pause: (ids) => { for (const id of ids) void routines.update(id, { enabled: false }).catch((error: unknown) => console.error("routines: cloud settle pause failed:", error)); },
     },
     unpin: (threadIds) => { for (const threadId of threadIds) store.unpinTaskCwd(threadId); },
     lines: () => {
@@ -11428,11 +11616,14 @@ if (CLOUD_HOME && CLOUD_OWNER_KEY && cloudRoutineAuthors) {
     log: (line) => console.log(line),
   });
   ownerOnlyCache.clear();
+  }
 }
+
+function initOrgLibrary(): void {
 orgLibrary = new OrgLibrary({
   dataDir: DATA_DIR,
   store,
-  routines: routines!,
+  routines: { packageStamps: mirrorPackageStamps, listRoutines: mirrorListRoutines, update: (id, patch, request) => routines.update(id, patch, request), remove: (id, request) => routines.detached.remove(id, request) },
   skills: { list: listSkills, stamps: skillPackageStamps, setEnabled: setSkillEnabled, installOrg: installOrgSkill },
   presets: presetStore,
   // Runtime → Electron main, which posts the report to Admin. Plain Node
@@ -11442,15 +11633,19 @@ orgLibrary = new OrgLibrary({
 {
   // Set by the port listener above, which TypeScript cannot see run first.
   const early = pendingOrgLibraryRelay as { library: unknown } | null;
-  if (early) orgLibrary.applyRelay(early.library);
+  if (early) orgLibrary!.applyRelay(early.library);
   pendingOrgLibraryRelay = null;
 }
+}
+
 // The scheduler receipt and room transcript live in separate durable stores.
 // If the process exited between those two writes, prefer the correlated
 // RoutineRun's terminal truth; an uncorrelated manual goal is simply failed
-// because no in-memory orchestrator can survive a restart.
+// because no in-memory orchestrator can survive a restart. Async now: the
+// runs snapshot is a Jac op, taken after routine_boot and mirror refresh.
+async function recoverRoutineGoalRuns(): Promise<void> {
 const recoveredRoutineGoalRuns = new Map(
-  routines.listRuns().filter((run) => run.target === "room-goal").map((run) => [run.id, run]),
+  (await routines.listRuns()).filter((run) => run.target === "room-goal").map((run) => [run.id, run]),
 );
 const groupGoalRecoveryAt = Date.now();
 store.reconcileInterruptedGroupGoals((runId, threadId) => {
@@ -11472,17 +11667,19 @@ store.reconcileInterruptedGroupGoals((runId, threadId) => {
   );
   return { status, detail, finishedAt: run.finishedAt ?? groupGoalRecoveryAt };
 });
+}
 calendarCalls = new CalendarCallManager({
   botExists: (botId) => Boolean(store.bot(botId)),
   onDue: deliverCalendarCall,
 });
-const recoveryOwners = routines.routineRequestReceiptOwners();
+async function recoverRoutineReceipts(): Promise<void> {
+const recoveryOwners = await routines.routineRequestReceiptOwners();
 if (recoveryOwners.length > 0) {
   // A normal launch has no crash-gap receipts, so it must not eagerly load
   // every historical transcript. Inspect only the distinct threads named by
   // a surviving receipt; reconciliation then removes any whose card vanished.
   const recoveryThreads = [...new Set(recoveryOwners.map((owner) => owner.threadId))];
-  routines.reconcileRoutineRequestReceipts(
+  await routines.reconcileRoutineRequestReceipts(
     recoveryThreads.flatMap((threadId) =>
       store.messagesFor(threadId).flatMap((message) => {
         const request = message.card?.routineRequest;
@@ -11492,6 +11689,7 @@ if (recoveryOwners.length > 0) {
       }),
     ),
   );
+}
 }
 
 // Chat tools can prepare routine changes, but the harness applies them only
@@ -11567,7 +11765,7 @@ async function deleteBotWithLifecycle(botId: string, revalidate: () => void = ()
       if (boatLifecycleBusyBots.has(bot.id)) {
         return deletionResponse( 409, { error: "wait for this bot's cloud computer action to finish before deleting the bot" });
       }
-      const activeRoutine = routines!.activeRunForBot(bot.id);
+      const activeRoutine = await routines.activeRunForBot(bot.id);
       if (activeRoutine) {
         return deletionResponse( 409, {
           error: "stop this bot's active routine before deleting the bot",
@@ -11739,8 +11937,8 @@ async function deleteBotWithLifecycle(botId: string, revalidate: () => void = ()
           store.deleteBot(bot.id, setupRequest);
           // Removing schedules is not a security revocation. Keep them intact
           // if the bot/receipt write fails, so a failed deletion is retryable.
-          routines!.disableForBot(bot.id);
-          webhooks.disableForBot(bot.id);
+          await routines.disableForBot(bot.id);
+          await webhooks.disableForBot(bot.id);
           calendarCalls!.removeBot(bot.id);
           browserLive.closeForBot(bot.id);
           await forgetTemporaryBrowser(bot.id);
@@ -11892,9 +12090,9 @@ const teamSetupRequests = new TeamSetupRequestService({
   validateChange: (before, fields) => assertTeamComputerChangeIdle(before, { ...before, ...fields }),
   ownsThread: (botId, threadId) => Boolean(connectorThread(botId, threadId)),
   targetBusy: (botId, sourceThreadId) => {
-    if (!sourceThreadId) return Boolean(store.bot(botId)?.busy || hasDirectDispatch(botId) || activeGroupTurnForBot(botId) || routines?.activeRunForBot(botId));
+    if (!sourceThreadId) return Boolean(store.bot(botId)?.busy || hasDirectDispatch(botId) || activeGroupTurnForBot(botId) || mirrorActiveRunForBot(botId));
     const group = activeGroupTurnForBot(botId);
-    const run = routines?.activeRunForBot(botId);
+    const run = mirrorActiveRunForBot(botId);
     return store.tasks(botId).some(task => task.threadId !== sourceThreadId && threadBusy(botId, task.threadId)) ||
       [...directTurnDispatchClaims].some(([threadId, claim]) => threadId !== sourceThreadId && claim.botId === botId) ||
       Boolean(group && group.threadId !== sourceThreadId) || Boolean(run && run.threadId !== sourceThreadId);
@@ -11999,7 +12197,7 @@ const routineTimeZone = () => Intl.DateTimeFormat().resolvedOptions().timeZone |
 const routineTimestamp = (value: number | undefined) =>
   value !== undefined && Number.isFinite(value) ? new Date(value).toISOString() : null;
 const agentRoutine = (
-  routine: ReturnType<RoutineManager["listRoutines"]>[number],
+  routine: Routine,
   latestRun?: RoutineRun,
 ) => {
   // Routines created in the calendar predate chat-card redaction and may
@@ -12062,7 +12260,7 @@ const agentRoutine = (
 };
 function sendRoutineResolution(
   res: ServerResponse,
-  result: ReturnType<RoutineRequestService["resolve"]>,
+  result: Awaited<ReturnType<RoutineRequestService["resolve"]>>,
 ): boolean {
   if (!result.claimed) return false;
   if (result.state === "invalid") {
@@ -12089,11 +12287,11 @@ function sendRoutineResolution(
   });
   return true;
 }
-function resolveAndSendRoutine(
+async function resolveAndSendRoutine(
   res: ServerResponse,
   args: { botId: string; botName?: string; threadId: string; requestId: string; behavior: string },
   ownersAnswer = false,
-): boolean {
+): Promise<boolean> {
   const card = store.messagesFor(args.threadId).find(
     (message) => message.card?.requestId === args.requestId && message.card.routineRequest,
   )?.card;
@@ -12101,7 +12299,7 @@ function resolveAndSendRoutine(
   // it only changed stays whosever it was (cloudOwnerApplied).
   const operation = card?.routineRequest?.operation;
   const wasOwners = operation && operation.action !== "create" ? cloudRoutineIsOwners(operation.routineId) : false;
-  const result = routineRequests.resolve(args);
+  const result = await routineRequests.resolve(args);
   if (ownersAnswer && result.claimed && result.state === "applied") cloudOwnerApplied(result.action, result.resultId, wasOwners);
   if (
     result.claimed &&
@@ -12196,10 +12394,10 @@ function resolveAndSendModel(
 const webhooks = new WebhookManager({
   emit: broadcast,
   botState: unattendedDispatchState,
-  enqueue: (input) => routines!.enqueueWebhook(input),
-  findRun: (webhookId, deliveryId) => routines!.webhookRunReceipt(webhookId, deliveryId),
-  cancelQueued: (webhookId, message) => routines!.cancelQueuedWebhook(webhookId, message),
-  pendingRuns: (webhookId) => routines!.activeWebhookRunCount(webhookId),
+  enqueue: (input) => routines.enqueueWebhook(input),
+  findRun: (webhookId, deliveryId) => routines.webhookRunReceipt(webhookId, deliveryId),
+  cancelQueued: (webhookId, message) => routines.cancelQueuedWebhook(webhookId, message),
+  pendingRuns: (webhookId) => routines.activeWebhookRunCount(webhookId),
   // delivery:"post" webhooks land in a dedicated "Updates" task, never
   // bot.threadId (the bot's currently-selected task) -- see
   // resolvePostThread below. Fixes
@@ -15540,7 +15738,7 @@ async function stopCompanyInstances(ids: string[]) {
     stopScreenPoller(botId, threadId); releaseLocalVmThread(threadId);
     watchdog.settle(threadId); closeOpenApprovals(threadId); directTurnBots.delete(threadId);
     finalizeDelegationWatch(threadId, false, "", "Company connection changed");
-    routines?.failThread(threadId, "Company connection changed while this thread was running");
+    routines.detached.failThread(threadId, "Company connection changed while this thread was running");
     if (store.taskByThread(botId, threadId)) {
       store.appendMessage(threadId, { role: "bot", kind: "activity", tool: { name: "Company connection changed — choose whether to reconnect or use a personal model", ok: false } });
       store.setTaskActivity(botId, threadId, "idle");
@@ -15627,7 +15825,7 @@ async function reloadProviders() {
       closeOpenApprovals(threadId);
       directTurnBots.delete(threadId);
       finalizeDelegationWatch(threadId, false, "", "Delegated turn did not finish — provider settings changed");
-      routines?.failThread(threadId, "Provider settings changed while this thread was running");
+      routines.detached.failThread(threadId, "Provider settings changed while this thread was running");
       if (store.taskByThread(botId, threadId)) {
         store.appendMessage(threadId, {
           role: "bot", kind: "activity",
@@ -15738,15 +15936,15 @@ const workspaceBackupAccess = {
     return work();
   }, {
     idle: () => !providerFleetReloading && !providerAuthSessions.active && !browserEngineInstall &&
-      !routines?.isTicking && !calendarCalls?.isTicking &&
+      !mirrorBusy() && !calendarCalls?.isTicking &&
       !localVmImageBusy && !localVmProvisionBusy && !localVmModeChangeBusy &&
       !localVmLifecycleBusy.size && !boatLifecycleBusyBots.size && !vpsPreviewRequests.size && !orphanBoatLifecycleBusyIds.size &&
       !computerProviderConfigTransitions.size &&
       teamComputers.list().every(computer => !teamComputerInUse(computer)) &&
-      store.bots.every((bot) => !botHasActiveTurn(bot.id) && !routines?.activeRunForBot(bot.id) && !botComputerControlSnapshot(bot.id).held) &&
+      store.bots.every((bot) => !botHasActiveTurn(bot.id) && !mirrorActiveRunForBot(bot.id) && !botComputerControlSnapshot(bot.id).held) &&
       store.groups.every((group) => !groupIsWorking(group)),
-    pause: () => { routines?.stop(); calendarCalls?.stop(); watchdog.stop(); memoryUpkeep.pause(); },
-    resume: () => { routines?.start(); calendarCalls?.start(); watchdog.start(); memoryUpkeep.resume(); },
+    pause: () => { void routines.pause().catch((error: unknown) => console.error("routines: pause failed:", error)); calendarCalls?.stop(); watchdog.stop(); memoryUpkeep.pause(); },
+    resume: () => { void routines.resume().catch((error: unknown) => console.error("routines: resume failed:", error)); calendarCalls?.start(); watchdog.start(); memoryUpkeep.resume(); },
     flush: async () => {
       await Promise.all([flushAllProfileHistory(), flushAllMemoryJournals(), flushUsageLedger(DATA_DIR), flushDecisionLog(DATA_DIR), flushAdminActivity(DATA_DIR)]);
       // With writers gated and work idle, release our WAL connection for the
@@ -16430,6 +16628,37 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
     // ── internal peer-agent comms (localhost + bot capability only) ───
     // The agents-proxy (spawned inside a bot's agent process) calls these to
     // discover peers and hand a message to one. Not part of the public API.
+    // ── Jac → node routine bridge (localhost + shared-secret header) ────
+    // The spawned harness (server/jac-routines.ts) carries the token minted
+    // for it in `x-omb-jac-token`; the bot-capability gate below stays for
+    // peer-agent comms only. `timingSafeEqual` so a guessed token's early
+    // exit leaks nothing about it.
+    if (path === "/api/internal/routine-bridge") {
+      if (method !== "POST") return json(res, 405, { error: "method not allowed" });
+      const expected = Buffer.from(jacBridgeToken());
+      const actual = Buffer.from(String(req.headers["x-omb-jac-token"] ?? ""));
+      if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) {
+        return json(res, 403, { error: "unauthorized" });
+      }
+      const bridgeBody = await readBody(req);
+      if (!bridgeBody || typeof bridgeBody !== "object" || Array.isArray(bridgeBody)) {
+        return json(res, 400, { error: "bridge body must be an object" });
+      }
+      const { op, ...bridgePayload } = bridgeBody as { op?: unknown } & BridgePayload;
+      if (typeof op !== "string") return json(res, 400, { error: "bridge op must be a string" });
+      // Jac sends snake_case top-level keys (bot_id, group_id, thread_id,
+      // run_on); the handlers below read camelCase. Alias once, here.
+      const normalized: BridgePayload = { ...bridgePayload };
+      for (const [snake, camel] of [
+        ["bot_id", "botId"], ["group_id", "groupId"], ["thread_id", "threadId"], ["run_on", "runOn"],
+      ] as const) {
+        if (normalized[snake] !== undefined && normalized[camel] === undefined) {
+          normalized[camel] = normalized[snake];
+        }
+      }
+      return json(res, 200, await routineBridgeOp(op, normalized));
+    }
+
     if (path.startsWith("/api/internal/")) {
       const internalCapability = authorizedInternalCapability(req.headers.authorization);
       if (!internalCapability) {
@@ -16934,13 +17163,13 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         // listRuns is newest-first. Keep the first receipt per definition so
         // the agent can answer "did it run?" from scheduler truth rather
         // than guessing from conversation history.
-        for (const run of routines!.listRuns()) {
+        for (const run of await routines.listRuns()) {
           if (run.botId === from.id && !latestRuns.has(run.routineId)) latestRuns.set(run.routineId, run);
         }
         return json(res, 200, {
           now: new Date().toISOString(),
           timeZone: routineTimeZone(),
-          routines: routines!.listRoutines()
+          routines: (await routines.listRoutines())
             .filter((routine) => routine.botId === from.id)
             .slice(0, 100)
             .map((routine) => agentRoutine(routine, latestRuns.get(routine.id))),
@@ -18532,7 +18761,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
           if (!allowedRoster(next)) return json(res, 403, { error: "keep yourself in the room; only the user can remove its managing Chief" });
           patch.memberIds = next;
         }
-        const updated = updateChannel(room.id, patch);
+        const updated = await updateChannel(room.id, patch);
         return json(res, 200, { ok: true, memberIds: updated.memberIds, memberCount: updated.memberIds.length, message: `Updated room “${updated.name}”.` });
       }
       if (method === "POST" && path === "/api/internal/mcp-servers") {
@@ -19057,13 +19286,14 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
 
     // ── routines calendar ────────────────────────────────────────────────
     if (path === "/api/routines" && method === "GET") {
+      if (jacUnavailable()) return json(res, 503, { error: jacUnavailableReason() ?? "routines unavailable" });
       const fromParam = url.searchParams.get("from");
       const toParam = url.searchParams.get("to");
       const from = fromParam == null ? undefined : Number(fromParam);
       const to = toParam == null ? undefined : Number(toParam);
       return json(res, 200, {
-        routines: routines!.listRoutines().filter((routine) => routineVisible(routine, visible)),
-        runs: routines!.listRuns(from != null && Number.isFinite(from) ? from : undefined, to != null && Number.isFinite(to) ? to : undefined)
+        routines: (await routines.listRoutines()).filter((routine) => routineVisible(routine, visible)),
+        runs: (await routines.listRuns(from != null && Number.isFinite(from) ? from : undefined, to != null && Number.isFinite(to) ? to : undefined))
           .filter((run) => routineVisible(run, visible)),
       });
     }
@@ -19079,7 +19309,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       const notYours = routineResultsRefusal(body);
       if (notYours) return json(res, 403, { error: notYours });
       const writer = auth.kind === "session" ? actorKey(auth) : CLOUD_NOBODY_KEY;
-      const routine = withRoutineWriter(writer, () => routines!.create(body));
+      const routine = await withRoutineWriter(writer, async () => routines.create(body));
       // On a Cloud home, a routine the owner writes from their own device may
       // use their lent Mac when it runs (server/cloud-lending.ts).
       if (cloudRoutineAuthors && cloudOwnerSession(auth)) cloudRoutineAuthors.record(routine.id, routine);
@@ -19089,11 +19319,11 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
     // The desktop shell polls this to decide whether to hold the computer
     // awake: a run in flight, or a routine due within the hour.
     if (path === "/api/routines/wake" && method === "GET") {
-      return json(res, 200, routines!.wakeHold());
+      return json(res, 200, await routines.wakeHold());
     }
     let routineMatch = path.match(/^\/api\/routines\/([\w-]+)\/run$/);
     if (routineMatch && method === "POST") {
-      const run = routines!.runNow(routineMatch[1]);
+      const run = await routines.runNow(routineMatch[1]);
       if (run && CLOUD_HOME && cloudOwnerSession(auth)) ownerStartedRoutineRuns.add(run.id);
       return run ? json(res, 201, { run }) : json(res, 404, { error: "no such routine" });
     }
@@ -19104,7 +19334,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       if (hidden) return json(res, 404, { error: hidden });
       const notYours = routineResultsRefusal(body);
       if (notYours) return json(res, 403, { error: notYours });
-      const before = cloudRoutineAuthors ? routines!.listRoutines().find((candidate) => candidate.id === routineMatch![1]) : undefined;
+      const before = cloudRoutineAuthors ? (await routines.listRoutines()).find((candidate) => candidate.id === routineMatch![1]) : undefined;
       const wasOwners = Boolean(before && cloudRoutineAuthors?.authored(before.id, before));
       const previous = cloudRoutineAuthors?.writer(routineMatch[1]);
       // Who this edit leaves as the routine's writer: the owner when the
@@ -19121,7 +19351,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       const writer = ownerAuthors && CLOUD_OWNER_KEY ? CLOUD_OWNER_KEY
         : auth.kind === "session" && !cloudOwnerSession(auth) ? actorKey(auth)
           : previous && !cloudOwnerPerson(previous) ? previous : CLOUD_NOBODY_KEY;
-      const routine = withRoutineWriter(writer, () => routines!.update(routineMatch![1], body));
+      const routine = await withRoutineWriter(writer, async () => routines.update(routineMatch![1], body));
       // The owner's own edit keeps (or, when it rewrites the instructions,
       // makes) the routine theirs. Anyone else's edit, of any field (its
       // schedule, where its results go, whether it is on), makes it no longer
@@ -19134,20 +19364,20 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       return routine ? json(res, 200, { routine }) : json(res, 404, { error: "no such routine" });
     }
     if (routineMatch && method === "DELETE") {
-      const removed = routines!.remove(routineMatch[1]);
+      const removed = await routines.remove(routineMatch[1]);
       if (removed) cloudRoutineAuthors?.remove(routineMatch[1]);
       return removed
         ? json(res, 200, { ok: true })
         : json(res, 404, { error: "no such routine" });
     }
     if (path === "/api/routine-runs/seen-all" && method === "POST") {
-      return json(res, 200, { runs: routines!.markAllSeen() });
+      return json(res, 200, { runs: await routines.markAllSeen() });
     }
     const runMatch = path.match(/^\/api\/routine-runs\/([\w-]+)\/(cancel|seen)$/);
     if (runMatch && method === "POST") {
       const run = runMatch[2] === "cancel"
-        ? await routines!.cancelRun(runMatch[1])
-        : routines!.markSeen(runMatch[1]);
+        ? await routines.cancelRun(runMatch[1])
+        : await routines.markSeen(runMatch[1]);
       return run ? json(res, 200, { run }) : json(res, 404, { error: "no such active run" });
     }
 
@@ -19214,7 +19444,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
     let webhookMatch = path.match(/^\/api\/webhooks\/([\w-]+)\/(rotate|test)$/);
     if (webhookMatch && method === "POST") {
       if (webhookMatch[2] === "test") {
-        const result = webhooks.test(webhookMatch[1], await readBody(req));
+        const result = await webhooks.test(webhookMatch[1], await readBody(req));
         return result ? json(res, 202, result) : json(res, 404, { error: "no such webhook" });
       }
       const rotated = webhooks.rotateSecret(webhookMatch[1]);
@@ -19228,11 +19458,11 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
     }
     webhookMatch = path.match(/^\/api\/webhooks\/([\w-]+)$/);
     if (webhookMatch && method === "PATCH") {
-      const webhook = webhooks.update(webhookMatch[1], await readBody(req));
+      const webhook = await webhooks.update(webhookMatch[1], await readBody(req));
       return webhook ? json(res, 200, { webhook }) : json(res, 404, { error: "no such webhook" });
     }
     if (webhookMatch && method === "DELETE") {
-      return webhooks.remove(webhookMatch[1])
+      return await webhooks.remove(webhookMatch[1])
         ? json(res, 200, { ok: true })
         : json(res, 404, { error: "no such webhook" });
     }
@@ -19898,7 +20128,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
             authorName: profileName,
             bots: store.bots,
             groups: store.groups,
-            routines: routines!.listRoutines(),
+            routines: await routines.listRoutines(),
             brief: readSectionContext(team)?.text,
             published: readPublishedTeam(team),
             skillsByBot: skills.skillsByBot,
@@ -19935,7 +20165,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       if ((body.format === "backup" ? store.bots.length : memberIds.length) === 0) return json(res, 400, { error: "Create a bot before exporting your team" });
       try {
         if (body.format === "backup") {
-          return json(res, 200, createTeamBackup(store, routines!.listRoutines(), name));
+          return json(res, 200, createTeamBackup(store, await routines.listRoutines(), name));
         }
         if (body.format === "package") {
           const selectedBots = store.bots.filter((bot) => !bot.hidden);
@@ -19946,7 +20176,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
             authorName: profileName,
             bots: selectedBots,
             groups: store.groups,
-            routines: routines!.listRoutines(),
+            routines: await routines.listRoutines(),
             skillsByBot: collectExportSkills(selectedBots, skillNames.names),
           });
           return json(res, 200, {
@@ -20048,7 +20278,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       const packageId = typeof body?.packageId === "string" && /^[a-f0-9-]{36}$/.test(body.packageId) ? body.packageId : null;
       if (!packageId) return json(res, 400, { error: "Choose a package from your organization's library." });
       if (!orgLibrary) return json(res, 404, { error: "This package is not in your organization's library.", code: "not_listed" });
-      const outcome = orgLibrary.add(packageId, packageImportDeps(await defaultSelection()));
+      const outcome = await orgLibrary.add(packageId, packageImportDeps(await defaultSelection()));
       if (!outcome.ok) return json(res, outcome.status, { error: outcome.error, code: outcome.code });
       if (outcome.value.alreadyAdded) return json(res, 200, outcome.value);
       const imported = outcome.value.result;
@@ -20129,7 +20359,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       if (body?.format === "openmaus.backup") {
         if (importMode !== "add") return json(res, 400, { error: "Import backups alongside your existing bots; project mode is only for templates" });
         try {
-          const imported = importTeamBackup(store, routines!, body, await defaultSelection(), { visibility: importVisibility });
+          const imported = await importTeamBackup(store, routines, body, await defaultSelection(), { visibility: importVisibility });
           // A restore writes its transcripts without store events, after the
           // store's own frames announced each bot and room, so these frames
           // are what carries the restored pages to other clients.
@@ -20164,9 +20394,9 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       };
       let imported: PackageImportResult;
       try {
-        const result = packageDocument
+        const result = await (packageDocument
           ? importPackageDocument(packageDocument, { ...options, trust: "file" }, deps)
-          : importTeamManifest(manifest!, options, deps);
+          : importTeamManifest(manifest!, options, deps));
         // A file import always gets a fresh install id, so it never reports
         // "already added"; that answer belongs to the organization library.
         if (result.alreadyAdded) return json(res, 200, result);
@@ -20391,7 +20621,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         const notYours = cloudThreadRefusal(auth, renamed.threadId);
         if (notYours) return json(res, 403, { error: notYours });
       }
-      const group = updateChannel(m[1], body);
+      const group = await updateChannel(m[1], body);
       return json(res, 200, { group: publicGroupState(group) });
     }
     m = path.match(/^\/api\/groups\/([\w-]+)\/read$/);
@@ -20418,7 +20648,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         lastReply.delete(threadId);
         clearTurnDigestState(threadId);
       }
-      routines!.disableForGroup(group.id);
+      await routines.disableForGroup(group.id);
       store.deleteGroup(group.id);
       rejectDeletedThreadSkillStages(stagedSkillCleanups);
       return json(res, 200, { ok: true });
@@ -20993,12 +21223,12 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         // (and the conversations they report into) are theirs.
         const ownersRoutines = CLOUD_OWNER_KEY && auth.kind === "session" && cloudOwnerSession(auth) ? CLOUD_OWNER_KEY : null;
         for (const routine of template.routines) {
-          const created = routines!.create({ ...routine, botId: bot.id, enabled: false });
+          const created = await routines.create({ ...routine, botId: bot.id, enabled: false });
           createdRoutines.push({ id: created.id, enabled: routine.enabled !== false });
           if (ownersRoutines) cloudRoutineAuthors?.wrote(created.id, ownersRoutines);
         }
       } catch (error) {
-        for (const routine of createdRoutines) routines!.remove(routine.id);
+        for (const routine of createdRoutines) await routines.remove(routine.id);
         store.deleteBot(bot.id);
         throw error;
       }
@@ -21014,7 +21244,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         }
       }
       for (const routine of createdRoutines) if (routine.enabled) {
-        try { routines!.update(routine.id, { enabled: true }); }
+        try { await routines.update(routine.id, { enabled: true }); }
         catch { warnings.push(`Bot created; routine ${routine.id} could not be activated.`); }
       }
       return json(res, 201, {
@@ -21675,8 +21905,8 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       }
       if (existingBot?.computer === "local" && computerSpecified && requestedComputer !== "local") {
         await interruptAllDirectThreads(existingBot.id);
-        const routine = routines!.activeBotRunForBot(existingBot.id);
-        if (routine) await routines!.cancelRun(routine.id);
+        const routine = await routines.activeBotRunForBot(existingBot.id);
+        if (routine) await routines.cancelRun(routine.id);
         const groupTurn = activeGroupTurnForBot(existingBot.id);
         if (groupTurn) {
           cancelGroupTurnOperations(groupTurn.group.id, groupTurn.threadId);
@@ -21803,13 +22033,13 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
           .filter((bot) => bot.computer === "local")
           .map(async (bot) => {
             await interruptAllDirectThreads(bot.id);
-            const routineRun = routines!.activeBotRunForBot(bot.id);
+            const routineRun = await routines.activeBotRunForBot(bot.id);
             if (routineRun) {
               cancelDirectTurnDispatch(bot.id, routineRun.threadId);
               if (routineRun.threadId) {
                 revokeInternalCapabilitiesForThread(routineRun.threadId);
               }
-              await routines!.cancelRun(routineRun.id);
+              await routines.cancelRun(routineRun.id);
             }
             const groupTurn = activeGroupTurnForBot(bot.id);
             if (groupTurn) {
@@ -22563,7 +22793,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         if (await resolveAndSendTeamSetup(res, {
           botId: bot.id, threadId: bot.threadId, requestId: String(body.requestId), behavior,
         }, auth.kind === "loopback" ? DESKTOP_MANAGED || Boolean(req.headers.origin) && !store.bots.some((bot) => bot.busy || activeGroupTurnForBot(bot.id)) : auth.scopes.includes("admin"))) return;
-        if (resolveAndSendRoutine(res, {
+        if (await resolveAndSendRoutine(res, {
           botId: bot.id,
           botName: bot.name,
           threadId: bot.threadId,
@@ -22669,7 +22899,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
           const routineBotId = routineCard.from?.botId ?? store.botByThread(threadId)?.id;
           if (!routineBotId) return json(res, 400, { error: "this routine request has no valid owner" });
           const routineOwner = store.bot(routineBotId);
-          if (resolveAndSendRoutine(res, {
+          if (await resolveAndSendRoutine(res, {
             botId: routineBotId,
             botName: routineOwner?.name,
             threadId,
@@ -22782,8 +23012,8 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       // Explicit thread targets never fall through to another routine or
       // channel just because it belongs to the same bot.
       if (typeof expectedThreadId === "string" && store.taskByThread(bot.id, expectedThreadId)) {
-        const routine = routines!.activeBotRunForBot(bot.id);
-        if (routine?.threadId === expectedThreadId) await routines!.cancelRun(routine.id);
+        const routine = await routines.activeBotRunForBot(bot.id);
+        if (routine?.threadId === expectedThreadId) await routines.cancelRun(routine.id);
         else {
           handoffs.stoppedByPerson(expectedThreadId);
           await interruptDirectThread(bot.id, expectedThreadId);
@@ -22791,7 +23021,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         return json(res, 200, { ok: true });
       }
       const directClaim = directTurnDispatchClaims.get(bot.threadId);
-      const routineRun = routines!.activeBotRunForBot(bot.id);
+      const routineRun = await routines.activeBotRunForBot(bot.id);
       if (routineRun) {
         if (expectedThreadId !== undefined && routineRun.threadId !== expectedThreadId) {
           return json(res, 409, { error: "this bot is running a routine in another conversation" });
@@ -22800,7 +23030,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         if (routineRun.threadId) {
           revokeInternalCapabilitiesForThread(routineRun.threadId);
         }
-        await routines!.cancelRun(routineRun.id);
+        await routines.cancelRun(routineRun.id);
         return json(res, 200, { ok: true });
       }
       const instance = registry.get((botForThread(bot.id, expectedThreadId ?? bot.threadId) ?? bot).modelSelection.instanceId);
@@ -23086,7 +23316,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       if (phoneSecretSubmissions.hasThread(m[2])) {
         return json(res, 409, { error: "this task is securely saving a credential — try again when it finishes" });
       }
-      if (threadBusy(bot.id, m[2]) || routines!.isActiveThread(m[2])) {
+      if (threadBusy(bot.id, m[2]) || mirrorIsActiveThread(m[2])) {
         return json(res, 409, { error: "this task is running — stop it first" });
       }
       const stagedSkillCleanups = stagedSkillCleanupsForThread(m[2]);
@@ -23188,7 +23418,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
           assertCurrentOwner();
           if (section !== null && section !== "" && !store.sections.includes(section)) throw Object.assign(new Error("Create the team before assigning a computer"), { status: 404 });
           if (section !== null && store.bots.some(bot => sectionKey(bot.section) === section && (
-            botHasActiveTurn(bot.id) || routines?.activeRunForBot(bot.id) || botComputerControlSnapshot(bot.id).held || boatLifecycleBusyBots.has(bot.id)
+            botHasActiveTurn(bot.id) || mirrorActiveRunForBot(bot.id) || botComputerControlSnapshot(bot.id).held || boatLifecycleBusyBots.has(bot.id)
           ))) throw Object.assign(new Error("Stop the target team's work and release computer control before assigning this computer"), { status: 409 });
         };
         checkAssignment();
@@ -25427,8 +25657,31 @@ restoreChannelMessages();
   if (movedAutoPins) console.log(`Works on: moved ${movedAutoPins} auto-pinned thread(s) to their bot's current Works on`);
 }
 
+// Spawn the Jac routines harness as early as init allows: the health poll
+// overlaps the rest of module setup, so by the time listen's callback runs
+// routine_boot the harness is usually already answering.
+if (jacEnabled()) void ensureJacHarness();
+
 server.listen(PORT, "127.0.0.1", async () => {
   companyRuntimeReady();
+  // The Jac harness is spawned at module scope (below); the listener is
+  // already bound here, so routine_boot's Jac→node bridge calls — the
+  // fail-in-place run recoveries its emits carry — can land before any
+  // client request is accepted.
+  const jacUrl = await startJacRoutines();
+  // The library reads routine state through the synchronous mirror, so it
+  // initializes whether or not the harness answered — an empty mirror is
+  // its cold-start truth either way.
+  initOrgLibrary();
+  if (jacUrl) {
+    await settleRoutinesCloudHome();
+    await recoverRoutineGoalRuns();
+    await recoverRoutineReceipts();
+  } else if (jacEnabled()) {
+    console.error(`routines: Jac harness unavailable (${jacUnavailableReason()}) — /api/routines answers 503 until it recovers`);
+  } else {
+    console.log("routines: Jac harness disabled (OMB_JAC=0) — /api/routines answers 503");
+  }
   console.log(`openmausbot server on http://127.0.0.1:${PORT}`);
   // Words queued before the restart start first, ahead of anything sent from
   // now on. Their turns wait for the engines read at start like every turn.
@@ -25445,12 +25698,13 @@ server.listen(PORT, "127.0.0.1", async () => {
   // Startup work uses the same turn dispatcher and local tool endpoint as
   // ordinary chat. Start only once every registry is initialized and the
   // endpoint is listening; earlier dispatch can hit uninitialized bindings.
-  routines!.start();
+  // The Jac scheduler ticks itself (@schedule in jac/harness/routines.jac);
+  // there is no in-process routines.start() anymore.
   memoryUpkeep.start();
   const leftover = pendingThreads();
   if (leftover.length) console.log(`delegations: ${leftover.length} thread(s) with queued handoffs from a previous run — draining`);
   for (const threadId of leftover) {
-    const run = routines!.runForThread(threadId);
+    const run = mirrorRunForThread(threadId);
     // A person can reuse a completed run's task for unrelated work. Only
     // discard the old run's handoffs, not a later user's persisted queue.
     const reused = run?.finishedAt !== undefined && store.botByThread(threadId) &&
@@ -25497,7 +25751,7 @@ const gracefulShutdown = createGracefulShutdown({
       for (const idle of localVmIdles.values()) idle.cancel();
       vps.closeAllVpsDesktopTunnels();
       watchdog.stop();
-      routines?.stop();
+      stopJacHarness();
       calendarCalls?.stop();
       memoryUpkeep.stop();
       webhookIngress?.server.close();

@@ -4,7 +4,7 @@ import { takeImportName } from "../shared/import-name.ts";
 import { MAX_TEAM_BACKUP_BYTES, parseTeamBackup, type BackupTask, type TeamBackup } from "../shared/team-backup.ts";
 import type { BotVisibility } from "../shared/wire.ts";
 import type { BotRecord, GroupRecord, Message, Store, TaskRecord } from "./store.ts";
-import type { Routine, RoutineManager } from "./routines.ts";
+import type { Routine, RoutineInput, RoutineRequestCommit } from "./routines.ts";
 import { redactSecretsInText } from "./redact.ts";
 import {
   listMemoryLogs, listMemoryTopics, readMemoryFile, readMemoryLog, readMemoryTopic,
@@ -144,7 +144,9 @@ export function createTeamBackup(store: Store, routines: Routine[], name: string
 
 /** Import is always additive, including sections and Chiefs. Rollback owns
  * only the fresh records below and cannot touch any pre-existing bot/chat. */
-export function importTeamBackup(store: Store, routines: RoutineManager, input: unknown, selection: ModelSelection, options: { visibility?: BotVisibility } = {}) {
+// `routines` is the Jac seam (server/jac-routines.ts): create/remove cross a
+// process boundary now, so the import is async end to end.
+export async function importTeamBackup(store: Store, routines: { create(input: RoutineInput, request?: RoutineRequestCommit): Routine | Promise<Routine>; remove(id: string, request?: RoutineRequestCommit): boolean | Promise<boolean> }, input: unknown, selection: ModelSelection, options: { visibility?: BotVisibility } = {}) {
   const backup = parseTeamBackup(input);
   const bots: BotRecord[] = [];
   const groups: GroupRecord[] = [];
@@ -262,12 +264,12 @@ export function importTeamBackup(store: Store, routines: RoutineManager, input: 
       }
     }
     for (const source of backup.routines) {
-      createdRoutines.push(routines.create({ ...source, botId: botIds.get(source.botId)!,
+      createdRoutines.push(await routines.create({ ...source, botId: botIds.get(source.botId)!,
         groupId: source.target === "room-goal" ? groupIds.get(source.groupId!) : undefined, enabled: false }));
     }
     return { name: backup.name, bots, groups, routines: createdRoutines };
   } catch (error) {
-    for (const routine of createdRoutines) routines.remove(routine.id);
+    for (const routine of createdRoutines) await routines.remove(routine.id);
     // createBot/createGroup can throw during persistence before returning.
     // This synchronous import cannot interleave another writer, so include
     // every fresh ID, even a record that never reached the result arrays.

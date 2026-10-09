@@ -166,6 +166,41 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+  jac-conformance:
+    needs: static
+    if: needs.static.outputs.runtime == 'true'
+    # The Jac harness is the runtime for the migrated subsystems (message
+    # db first, routines in phase 2): this job runs its unit tests and the
+    # node-vs-Jac conformance corpora that gate each migration phase, so a
+    # port drift is red here and not silently green behind the node suite.
+    name: jac conformance
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@ff378ebe6b225b0680b81c1ad4498ae0d1d3a5e3 # v6.0.10
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Install jac 0.37.21
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/jaseci-labs/jaseci/main/scripts/install.sh | bash -s -- --version 0.37.21
+          jac --version
+      - name: Jac unit tests
+        working-directory: jac/harness
+        run: jac test
+      - name: Message-db conformance (phase 1 corpus)
+        working-directory: jac/harness/conformance
+        run: ./run.sh
+      - name: Routines conformance (phase 2 corpus)
+        working-directory: jac/harness/conformance
+        run: ./run-routines.sh
+      - name: Cron parity probe
+        working-directory: jac/harness/conformance
+        run: JAC_SPAWN=1 node cron-probe.mjs
+
   packaged-server:
     needs: static
     if: needs.static.outputs.runtime == 'true'
@@ -243,7 +278,7 @@ jobs:
   gate:
     # One aggregation, not three queued runners doing the same check.
     name: CI
-    needs: [static, vitest, behavior-evals, packaged-server, windows-cua, electron-smokes]
+    needs: [static, vitest, behavior-evals, jac-conformance, packaged-server, windows-cua, electron-smokes]
     # Still report failed/skipped dependencies, but don't keep a superseded
     # workflow alive just to schedule its summary jobs.
     if: ${{ !cancelled() }}

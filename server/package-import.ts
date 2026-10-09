@@ -64,8 +64,13 @@ export interface ImportSkip { part: string; reason: ImportSkipReason }
 
 export interface PackageImportDeps {
   store: Store;
-  /** stampInstalledPackage is needed for trust "org" only. */
-  routines: Pick<RoutineManager, "create" | "remove"> & Partial<Pick<RoutineManager, "stampInstalledPackage">>;
+  /** stampInstalledPackage is needed for trust "org" only. Promises are
+   * awaited — the scheduler lives in the Jac harness (server/jac-routines.ts). */
+  routines: {
+    create(input: RoutineInput, request?: unknown): Routine | Promise<Routine>;
+    remove(id: string, request?: unknown): boolean | Promise<boolean>;
+    stampInstalledPackage?(id: string, stamp: Parameters<RoutineManager["stampInstalledPackage"]>[1]): boolean | Promise<boolean>;
+  };
   skills: {
     install(botId: string, source: string, files: Array<{ path: string; content: string }>): SkillListing | { error: string };
     setEnabled(botId: string, name: string, enabled: boolean): SkillListing | { error: string };
@@ -195,11 +200,11 @@ type ImportSource =
   | { kind: "manifest"; manifest: ParsedTeamManifest };
 
 /** Add a shared team (v1 or v2, already parsed) as new records. */
-export function importPackageDocument(
+export async function importPackageDocument(
   document: PackageDocument,
   options: PackageImportOptions,
   deps: PackageImportDeps,
-): ImportResult {
+): Promise<ImportResult> {
   const pkg = document.package;
   const library = !pkg.agents.length || !pkg.team;
   // A library package (skills and presets, no bots) from a file needs the preset store.
@@ -267,11 +272,12 @@ export function importTeamManifest(
   manifest: ParsedTeamManifest,
   options: Omit<PackageImportOptions, "trust" | "org">,
   deps: PackageImportDeps,
-): PackageImportResult {
+): Promise<PackageImportResult> {
   return runImport({ kind: "manifest", manifest }, { ...options, trust: "file" }, deps);
 }
 
-function runImport(source: ImportSource, options: PackageImportOptions, deps: PackageImportDeps): PackageImportResult {
+async function runImport(source: ImportSource, options: PackageImportOptions, deps: PackageImportDeps): Promise<PackageImportResult> {
+
   const { store } = deps;
   const pkg = source.kind === "package" ? source.document.package : null;
   const name = pkg?.name ?? (source.kind === "manifest" ? source.manifest.team.name : "");
@@ -503,7 +509,7 @@ function runImport(source: ImportSource, options: PackageImportOptions, deps: Pa
         ...(routine.overlap ? { overlap: routine.overlap } : {}),
         ...(routine.continuity && routine.room === undefined ? { continuity: true } : {}),
       };
-      const created = deps.routines.create(input);
+      const created = await deps.routines.create(input);
       createdRoutines.push(created);
       if (org) {
         const local = {
@@ -512,7 +518,7 @@ function runImport(source: ImportSource, options: PackageImportOptions, deps: Pa
           schedule: scheduleValue(created),
           target: { botId: created.botId, groupId: created.groupId ?? null },
         };
-        deps.routines.stampInstalledPackage!(created.id, { installId: org.installId, key: routine.key, parts: pairs(ROUTINE_PARTS, routineReleaseValues(routine), local) });
+        await deps.routines.stampInstalledPackage!(created.id, { installId: org.installId, key: routine.key, parts: pairs(ROUTINE_PARTS, routineReleaseValues(routine), local) });
         orgIndex.routines[routine.key] = created.id;
       }
     }
@@ -573,7 +579,7 @@ function runImport(source: ImportSource, options: PackageImportOptions, deps: Pa
   } catch (error) {
     // A room of deleted members must not survive either — patchGroup can
     // throw (disk) after createGroup already saved.
-    for (const routine of createdRoutines) deps.routines.remove(routine.id);
+    for (const routine of createdRoutines) await deps.routines.remove(routine.id);
     for (const created of createdGroups) store.deleteGroup(created.id);
     for (const bot of importedBots) store.deleteBot(bot.id);
     deps.presets?.remove(createdPresets);

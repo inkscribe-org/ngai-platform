@@ -223,7 +223,17 @@ core turn pipeline on the runtime.
   checkpoints/lease/graph), conformance corpus green (62 ops, byte-identical
   `messages.db` dumps), 14/14 ported test invariants pass. Store registry
   (bots.json/groups.json) + router wiring remain.
-- M2: routines live on Jac.
+- M2: routines live on Jac. **Done 2026-10-08:** `jac/harness/routines.jac`
+  owns the scheduler (~4,300 lines: cron/interval/once evaluation, request
+  receipts, continuity carry, results threads, webhook enqueue, deferral,
+  package stamps). Node keeps the seam (`server/jac-routines.ts`:
+  serialized op queue, health/supervision, `/api/internal/routine-bridge`,
+  sync read mirror) and a types-only `server/routines.ts` (wire shapes +
+  `nextOccurrence` for calendar-calls). Conformance: 348-op corpus
+  byte-identical (logs/frames/bridge calls/routines.json), cron probe
+  47/47, `jac test` 107/107, `scripts/verify-routines.ts` green through a
+  live fixture. The in-process `RoutineManager` and its tests are deleted;
+  adjacent tests use `server/testing/routine-stub.ts`.
 - M3: drivers + bus on Jac; golden suites byte-exact.
 - M4: long-tail subsystems on Jac; verify scripts green.
 - M5: `server/index.ts` deleted; companion + enterprise ported; single

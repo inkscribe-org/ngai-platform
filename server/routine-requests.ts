@@ -9,15 +9,43 @@ import { newId } from "./contracts.ts";
 import { redactSecretsInText } from "./redact.ts";
 import { parseJson, schemaIssue, type JsonObject, type JsonValue } from "./schema.ts";
 import {
-  intervalHasRestrictions,
-  nextOccurrence,
   type Routine,
   type RoutineInput,
-  type RoutineManager,
   type RoutineRequestCommit,
+  type RoutineRequestReceipt,
+  type RoutineRun,
   type RoutineSchedule,
   type RoutineScheduleInput,
 } from "./routines.ts";
+
+/** Either the async Jac facade (server/jac-routines.ts) or a synchronous
+ * test double — unit tests keep passing a real RoutineManager. */
+type Awaitable<T> = T | Promise<T>;
+
+/** The scheduler surface this service commits through. Production wires
+ * the jacRoutines facade; RoutineRequestService's card lifecycle (receipts,
+ * previews, commit calls) is the only part of the old manager it needs. */
+export interface RoutineOps {
+  listRoutines(): Awaitable<Routine[]>;
+  create(input: RoutineInput, request?: RoutineRequestCommit): Awaitable<Routine>;
+  update(id: string, patch: Partial<RoutineInput>, request?: RoutineRequestCommit): Awaitable<Routine | null>;
+  remove(id: string, request?: RoutineRequestCommit): Awaitable<boolean>;
+  runNow(id: string, request?: RoutineRequestCommit): Awaitable<RoutineRun | null>;
+  routineRequestReceipt(requestId: string): Awaitable<RoutineRequestReceipt | null>;
+  forgetRoutineRequestReceipt(request: RoutineRequestCommit): Awaitable<boolean>;
+  /** Next scheduled occurrence strictly after `after` — the preview the
+   *  confirmation card prints (routine_next_occurrence over the seam). */
+  nextOccurrence(schedule: RoutineSchedule, after: number): Awaitable<number | null>;
+}
+
+/** The small pure check that used to sit beside the interval evaluator in
+ * routines.ts: does this schedule carry any weekday/window/end
+ * restriction? Reproduced verbatim (schedule semantics live in Jac now). */
+function intervalHasRestrictions(
+  schedule: { weekdays?: readonly number[] | null; window?: { start: string; end: string } | null; endsAt?: number | null },
+): boolean {
+  return schedule.weekdays != null || schedule.window != null || schedule.endsAt != null;
+}
 import type {
   RoutineRequestCardData,
   RoutineRequestChanges,
@@ -295,7 +323,7 @@ export interface RoutineRequestStore {
 
 export interface RoutineRequestServiceOptions {
   store: RoutineRequestStore;
-  routines: RoutineManager;
+  routines: RoutineOps;
   now?: () => number;
   timeZone?: () => string;
   /** Server-owned effective mode of the source conversation, never request input. */
@@ -583,8 +611,8 @@ function routineId(value: string): string {
   return value;
 }
 
-function ownedRoutine(manager: RoutineManager, id: string, botId: string): Routine | null {
-  return manager.listRoutines().find((routine) => routine.id === id && routine.botId === botId) ?? null;
+async function ownedRoutine(ops: RoutineOps, id: string, botId: string): Promise<Routine | null> {
+  return (await ops.listRoutines()).find((routine) => routine.id === id && routine.botId === botId) ?? null;
 }
 
 function noFutureResumeMessage(schedule: RoutineSchedule): string {
@@ -597,12 +625,12 @@ function noFutureResumeMessage(schedule: RoutineSchedule): string {
   return "That routine has no future runs. Update its schedule before resuming.";
 }
 
-function normalizedOperation(
-  manager: RoutineManager,
+async function normalizedOperation(
+  ops: RoutineOps,
   botId: string,
   validated: ParsedRoutineProposal,
   now: number,
-): RoutineRequestOperation {
+): Promise<RoutineRequestOperation> {
   if (validated.action === "create") {
     const operation: Extract<RoutineRequestOperation, { action: "create" }> = {
       action: "create",
@@ -616,7 +644,7 @@ function normalizedOperation(
   // run's permissions stay with that bot, exactly as a routine created
   // through the for_bot_id path keeps them.
   const ownerBotId = validated.forBot?.botId ?? botId;
-  const current = ownedRoutine(manager, id, ownerBotId);
+  const current = await ownedRoutine(ops, id, ownerBotId);
   if (!current) throw new RoutineRequestError("That routine does not exist", 404);
   if (validated.action === "update") {
     return {
@@ -627,7 +655,7 @@ function normalizedOperation(
       ...(validated.forBot ? { forBot: validated.forBot } : {}),
     };
   }
-  if (validated.action === "resume" && nextOccurrence(current.schedule, now) === null) {
+  if (validated.action === "resume" && (await ops.nextOccurrence(current.schedule, now)) === null) {
     throw new RoutineRequestError(noFutureResumeMessage(current.schedule), 409);
   }
   return {
@@ -703,23 +731,23 @@ function effectiveSchedule(
   return merged;
 }
 
-function nextForOperation(operation: RoutineRequestOperation, manager: RoutineManager, now: number): number | null {
+async function nextForOperation(operation: RoutineRequestOperation, ops: RoutineOps, now: number): Promise<number | null> {
   if (operation.action === "create") {
     if (operation.routine.schedule.type === "interval" && operation.routine.schedule.anchorAt === undefined) return null;
-    return nextOccurrence(asSchedule(operation.routine.schedule, now), now);
+    return ops.nextOccurrence(asSchedule(operation.routine.schedule, now), now);
   }
-  const current = manager.listRoutines().find((routine) => routine.id === operation.routineId);
+  const current = (await ops.listRoutines()).find((routine) => routine.id === operation.routineId);
   if (!current) return null;
   if (operation.action === "pause" || operation.action === "delete") return null;
   if (operation.action === "run_now") return now;
-  if (operation.action === "resume") return nextOccurrence(current.schedule, now);
+  if (operation.action === "resume") return ops.nextOccurrence(current.schedule, now);
   if (!("changes" in operation)) return null;
   if (!current.enabled) return null;
-  const definition = effectiveDefinition(operation, manager);
+  const definition = await effectiveDefinition(operation, ops);
   if (!definition) return null;
   if (definition.schedule.type === "interval" && definition.schedule.anchorAt === undefined) return null;
   const schedule = asSchedule(definition.schedule, now);
-  return nextOccurrence(schedule, now);
+  return ops.nextOccurrence(schedule, now);
 }
 
 function formatInstant(at: number, timeZone: string): string {
@@ -779,9 +807,9 @@ export function consequenceLine(schedule: RoutineRequestSchedule, continuity = f
   return `Will run ${cadence}; ${session}.`;
 }
 
-function effectiveDefinition(operation: RoutineRequestOperation, manager: RoutineManager): RoutineRequestDefinition | null {
+async function effectiveDefinition(operation: RoutineRequestOperation, ops: RoutineOps): Promise<RoutineRequestDefinition | null> {
   if (operation.action === "create") return operation.routine;
-  const existing = manager.listRoutines().find((routine) => routine.id === operation.routineId);
+  const existing = (await ops.listRoutines()).find((routine) => routine.id === operation.routineId);
   if (!existing) return null;
   const base: RoutineRequestDefinition = {
     name: existing.name,
@@ -813,13 +841,13 @@ function effectiveDefinition(operation: RoutineRequestOperation, manager: Routin
   return merged;
 }
 
-function cardCopy(
+async function cardCopy(
   operation: RoutineRequestOperation,
-  manager: RoutineManager,
+  ops: RoutineOps,
   timeZone: string,
   now: number,
-): RoutineCardCopy {
-  const definition = effectiveDefinition(operation, manager);
+): Promise<RoutineCardCopy> {
+  const definition = await effectiveDefinition(operation, ops);
   const actionCopy = ACTION_COPY[operation.action];
   const actionLabel = actionCopy.title;
   const name = redactSecretsInText(definition?.name ?? "routine");
@@ -835,13 +863,13 @@ function cardCopy(
       tool: "manage_routine",
     };
   }
-  const nextRunAt = nextForOperation(operation, manager, now);
+  const nextRunAt = await nextForOperation(operation, ops, now);
   const scheduleTimeZone = definition.schedule.type === "cron" ? definition.schedule.timeZone : timeZone;
   const when = operation.action === "run_now" ? "Now" : scheduleText(definition.schedule, timeZone);
   const destination = definition.runOn === "cloud" ? "Bot’s current model on its cloud computer" : "Bot’s current model and configured computer";
   const current = operation.action === "create"
     ? null
-    : manager.listRoutines().find((routine) => routine.id === operation.routineId) ?? null;
+    : (await ops.listRoutines()).find((routine) => routine.id === operation.routineId) ?? null;
   const remainsPaused = operation.action === "update" && current?.enabled === false;
   const deferredInterval = definition.schedule.type === "interval" && definition.schedule.anchorAt === undefined;
   const deferredRestrictedInterval = deferredInterval &&
@@ -961,12 +989,12 @@ export function routineRequestFingerprint(
   return createHash("sha256").update(JSON.stringify(canonicalValue(document))).digest("hex");
 }
 
-function verifyManageSnapshot(
+async function verifyManageSnapshot(
   operation: Exclude<RoutineRequestOperation, { action: "create" }>,
-  manager: RoutineManager,
+  ops: RoutineOps,
   botId: string,
-): Routine {
-  const current = ownedRoutine(manager, operation.routineId, botId);
+): Promise<Routine> {
+  const current = await ownedRoutine(ops, operation.routineId, botId);
   if (!current) throw new RoutineRequestError("That routine no longer exists", 404, { terminal: true });
   if (current.updatedAt !== operation.expectedUpdatedAt) {
     throw new RoutineRequestError(
@@ -990,12 +1018,12 @@ function requestCommit(payload: RoutineRequestCardData, messageId: string): Rout
   };
 }
 
-function revalidateOperation(operation: RoutineRequestOperation, manager: RoutineManager, botId: string, now: number): void {
+async function revalidateOperation(operation: RoutineRequestOperation, ops: RoutineOps, botId: string, now: number): Promise<void> {
   if (operation.action === "create") {
     const definition = operation.routine;
     const owner = operation.forBot?.botId ?? botId;
     const schedule = asSchedule(definition.schedule, now);
-    const duplicate = manager.listRoutines().find((routine) => {
+    const duplicate = (await ops.listRoutines()).find((routine) => {
       if (!routine.enabled || routine.target !== "bot" || routine.botId !== owner
         || routine.runOn !== definition.runOn || routine.prompt !== definition.instructions
         || routine.durationMinutes !== definition.durationMinutes
@@ -1023,7 +1051,7 @@ function revalidateOperation(operation: RoutineRequestOperation, manager: Routin
   }
   const current = operation.action === "create"
     ? null
-    : verifyManageSnapshot(operation, manager, operation.forBot?.botId ?? botId);
+    : await verifyManageSnapshot(operation, ops, operation.forBot?.botId ?? botId);
   const schedule = operation.action === "create"
     ? operation.routine.schedule
     : operation.action === "update"
@@ -1063,7 +1091,7 @@ function revalidateOperation(operation: RoutineRequestOperation, manager: Routin
         throw new RoutineRequestError(schemaIssue(valid.error, "Invalid interval schedule"));
       }
     }
-    if (concrete && nextOccurrence(concrete, now) === null) {
+    if (concrete && (await ops.nextOccurrence(concrete, now)) === null) {
       throw new RoutineRequestError(
         "That interval no longer has a future run. Choose a later end time or remove the end restriction.",
         409,
@@ -1072,7 +1100,7 @@ function revalidateOperation(operation: RoutineRequestOperation, manager: Routin
   }
   if (operation.action === "resume") {
     if (!current) throw new RoutineRequestError("That routine no longer exists", 404);
-    if (nextOccurrence(current.schedule, now) === null) {
+    if ((await ops.nextOccurrence(current.schedule, now)) === null) {
       throw new RoutineRequestError(noFutureResumeMessage(current.schedule), 409);
     }
   }
@@ -1080,7 +1108,7 @@ function revalidateOperation(operation: RoutineRequestOperation, manager: Routin
 
 export class RoutineRequestService {
   private readonly store: RoutineRequestStore;
-  private readonly routines: RoutineManager;
+  private readonly routines: RoutineOps;
   private readonly now: () => number;
   private readonly timeZone: () => string;
   private readonly cloudReady?: (botId: string) => Promise<{ ready: boolean; reason?: string }>;
@@ -1118,7 +1146,7 @@ export class RoutineRequestService {
     if (!parsedProposal.success) {
       throw new RoutineRequestError(schemaIssue(parsedProposal.error, "Invalid routine proposal"));
     }
-    const operation = normalizedOperation(this.routines, botId, parsedProposal.data, at);
+    const operation = await normalizedOperation(this.routines, botId, parsedProposal.data, at);
     if (operation.forBot && this.validateTarget) {
       const refusal = this.validateTarget(botId, operation.forBot);
       if (refusal) throw new RoutineRequestError(refusal, 403);
@@ -1128,7 +1156,7 @@ export class RoutineRequestService {
     // delete the routine while it is in flight, so re-check the captured
     // revision before rendering and persisting the confirmation snapshot.
     const cardAt = this.now();
-    revalidateOperation(operation, this.routines, botId, cardAt);
+    await revalidateOperation(operation, this.routines, botId, cardAt);
     const requestId = newId();
     const payload: RoutineRequestCardData = {
       version: 1,
@@ -1138,9 +1166,9 @@ export class RoutineRequestService {
       createdAt: cardAt,
       operation,
     };
-    const definition = effectiveDefinition(operation, this.routines);
+    const definition = await effectiveDefinition(operation, this.routines);
     const timeZone = definition?.schedule.type === "cron" ? definition.schedule.timeZone : this.timeZone();
-    const copy = cardCopy(operation, this.routines, timeZone, cardAt);
+    const copy = await cardCopy(operation, this.routines, timeZone, cardAt);
     const messageInput: Parameters<RoutineRequestStore["appendMessage"]>[1] = {
       role: "bot",
       kind: "options",
@@ -1185,14 +1213,14 @@ export class RoutineRequestService {
     // idempotent commit path without exposing a pending confirmation.
     let result: ResolveRoutineRequestResult;
     try {
-      result = this.resolve({ botId, threadId, requestId, behavior: "allow" });
+      result = await this.resolve({ botId, threadId, requestId, behavior: "allow" });
     } catch (error) {
       result = { claimed: true, state: "invalid", error: error instanceof Error ? error.message : String(error), status: error instanceof RoutineRequestError ? error.status : 400 };
     }
     if (result.state === "applied") return { ...proposal, result };
     // The scheduler commit can succeed even if settling its transcript
     // fails. Report that exact result; a retry only finishes the receipt.
-    const receipt = this.routines.routineRequestReceipt(requestId);
+    const receipt = await this.routines.routineRequestReceipt(requestId);
     if (receipt && receipt.botId === botId && receipt.threadId === threadId && receipt.messageId === message.id &&
       receipt.fingerprintVersion === ROUTINE_REQUEST_FINGERPRINT_VERSION && receipt.fingerprint === routineRequestFingerprint(payload, message.id)) {
       return { ...proposal, result: {
@@ -1205,13 +1233,13 @@ export class RoutineRequestService {
 
   private async requireCloudReadiness(operation: RoutineRequestOperation, proposerBotId: string): Promise<void> {
     if (!this.cloudReady || operation.action === "pause" || operation.action === "delete") return;
-    const definition = effectiveDefinition(operation, this.routines);
+    const definition = await effectiveDefinition(operation, this.routines);
     if (definition?.runOn !== "cloud") return;
     let readiness: { ready: boolean; reason?: string };
     try {
       const targetBotId = operation.action === "create"
         ? operation.forBot?.botId ?? proposerBotId
-        : this.routines.listRoutines().find(routine => routine.id === operation.routineId)?.botId ?? proposerBotId;
+        : (await this.routines.listRoutines()).find(routine => routine.id === operation.routineId)?.botId ?? proposerBotId;
       readiness = await this.cloudReady(targetBotId);
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
@@ -1229,12 +1257,12 @@ export class RoutineRequestService {
    * important: duplicate clicks must never fall through to a provider that
    * did not create the request id.
    */
-  resolve(args: {
+  async resolve(args: {
     botId: string;
     threadId: string;
     requestId: string;
     behavior: string | undefined;
-  }): ResolveRoutineRequestResult {
+  }): Promise<ResolveRoutineRequestResult> {
     const message = this.store
       .messagesFor(args.threadId)
       .find((candidate) => candidate.card?.requestId === args.requestId && candidate.card.routineRequest);
@@ -1252,7 +1280,7 @@ export class RoutineRequestService {
     const parsedPayload = routineRequestCardDataSchema.safeParse(rawPayload);
     if (!parsedPayload.success) {
       if (card.answered) return { claimed: true, state: "already_settled", behavior: card.answered };
-      const recovered = this.settleCommittedReceipt(args, message.id, card);
+      const recovered = await this.settleCommittedReceipt(args, message.id, card);
       if (recovered) return recovered;
       // Cancelling is always safe and must remain possible even if an older
       // persisted payload no longer passes today's schema. Otherwise that
@@ -1269,7 +1297,7 @@ export class RoutineRequestService {
     }
     const payload: RoutineRequestCardData = parsedPayload.data;
     if (payload.requestId !== args.requestId) {
-      const recovered = this.settleCommittedReceipt(args, message.id, card);
+      const recovered = await this.settleCommittedReceipt(args, message.id, card);
       if (recovered) return recovered;
       if (args.behavior === "deny") {
         this.store.patchMessage(args.threadId, message.id, { card: { ...card, answered: "deny", held: undefined } });
@@ -1278,7 +1306,7 @@ export class RoutineRequestService {
       return { claimed: true, state: "invalid", error: "This routine request id does not match its confirmation card", status: 400 };
     }
     if (payload.botId !== args.botId || payload.threadId !== args.threadId) {
-      const recovered = this.settleCommittedReceipt(args, message.id, card);
+      const recovered = await this.settleCommittedReceipt(args, message.id, card);
       if (recovered) return recovered;
       if (args.behavior === "deny") {
         this.store.patchMessage(args.threadId, message.id, { card: { ...card, answered: "deny", held: undefined } });
@@ -1293,7 +1321,7 @@ export class RoutineRequestService {
 
     try {
       const fingerprint = routineRequestFingerprint(payload, message.id);
-      const receipt = this.routines.routineRequestReceipt(payload.requestId);
+      const receipt = await this.routines.routineRequestReceipt(payload.requestId);
       if (receipt) {
         if (
           receipt.botId !== payload.botId ||
@@ -1331,12 +1359,12 @@ export class RoutineRequestService {
         this.store.patchMessage(args.threadId, message.id, { card: { ...card, answered: "deny", held: undefined } });
         return { claimed: true, state: "denied" };
       }
-      revalidateOperation(payload.operation, this.routines, payload.botId, this.now());
+      await revalidateOperation(payload.operation, this.routines, payload.botId, this.now());
       if (payload.operation.forBot && this.validateTarget) {
         const refusal = this.validateTarget(payload.botId, payload.operation.forBot);
         if (refusal) throw new RoutineRequestError(refusal, 404, { terminal: true });
       }
-      const resultId = this.apply(payload, message.id, fingerprint);
+      const resultId = await this.apply(payload, message.id, fingerprint);
       return this.settleApplied(args.threadId, message.id, card, payload, resultId);
     } catch (error) {
       const status = error instanceof RoutineRequestError ? error.status : 400;
@@ -1382,12 +1410,12 @@ export class RoutineRequestService {
     this.forgetReceipt(requestCommit(payload, messageId));
   }
 
-  private settleCommittedReceipt(
+  private async settleCommittedReceipt(
     args: { botId: string; threadId: string; requestId: string },
     messageId: string,
     card: RoutineRequestOptionCard,
-  ): ResolveRoutineRequestResult | null {
-    const receipt = this.routines.routineRequestReceipt(args.requestId);
+  ): Promise<ResolveRoutineRequestResult | null> {
+    const receipt = await this.routines.routineRequestReceipt(args.requestId);
     if (!receipt) return null;
     if (receipt.botId !== args.botId || receipt.threadId !== args.threadId || receipt.messageId !== messageId) {
       return {
@@ -1418,21 +1446,19 @@ export class RoutineRequestService {
   }
 
   private forgetReceipt(request: RoutineRequestCommit): void {
-    try {
-      this.routines.forgetRoutineRequestReceipt(request);
-    } catch {
-      // The transcript is already durably settled. Retaining a redundant
-      // receipt after a cleanup write failure is safe and a later duplicate
-      // response will retry this cleanup.
-    }
+    // The transcript is already durably settled. Retaining a redundant
+    // receipt after a cleanup write failure is safe and a later duplicate
+    // response will retry this cleanup — the same swallow the old try/catch
+    // gave a synchronous scheduler.
+    void Promise.resolve(this.routines.forgetRoutineRequestReceipt(request)).catch(() => {});
   }
 
-  private apply(payload: RoutineRequestCardData, messageId: string, fingerprint: string): string {
+  private async apply(payload: RoutineRequestCardData, messageId: string, fingerprint: string): Promise<string> {
     const operation = payload.operation;
     const confirmationAt = this.now();
     switch (operation.action) {
       case "create":
-        return this.routines.create(inputFromDefinition(
+        return (await this.routines.create(inputFromDefinition(
           operation.routine,
           operation.forBot?.botId ?? payload.botId,
           confirmationAt,
@@ -1444,10 +1470,10 @@ export class RoutineRequestService {
           action: "create",
           fingerprintVersion: ROUTINE_REQUEST_FINGERPRINT_VERSION,
           fingerprint,
-        }).id;
+        })).id;
       case "update": {
-        const current = verifyManageSnapshot(operation, this.routines, operation.forBot?.botId ?? payload.botId);
-        const updated = this.routines.update(
+        const current = await verifyManageSnapshot(operation, this.routines, operation.forBot?.botId ?? payload.botId);
+        const updated = await this.routines.update(
           operation.routineId,
           updateFromChanges(operation.changes, confirmationAt, current.schedule),
           {
@@ -1465,8 +1491,8 @@ export class RoutineRequestService {
       }
       case "pause":
       case "resume": {
-        verifyManageSnapshot(operation, this.routines, operation.forBot?.botId ?? payload.botId);
-        const updated = this.routines.update(operation.routineId, { enabled: operation.action === "resume" }, {
+        await verifyManageSnapshot(operation, this.routines, operation.forBot?.botId ?? payload.botId);
+        const updated = await this.routines.update(operation.routineId, { enabled: operation.action === "resume" }, {
           requestId: payload.requestId,
           messageId,
           botId: payload.botId,
@@ -1479,8 +1505,8 @@ export class RoutineRequestService {
         return updated.id;
       }
       case "run_now": {
-        verifyManageSnapshot(operation, this.routines, operation.forBot?.botId ?? payload.botId);
-        const run = this.routines.runNow(operation.routineId, {
+        await verifyManageSnapshot(operation, this.routines, operation.forBot?.botId ?? payload.botId);
+        const run = await this.routines.runNow(operation.routineId, {
           requestId: payload.requestId,
           messageId,
           botId: payload.botId,
@@ -1493,8 +1519,8 @@ export class RoutineRequestService {
         return run.id;
       }
       case "delete":
-        verifyManageSnapshot(operation, this.routines, operation.forBot?.botId ?? payload.botId);
-        if (!this.routines.remove(operation.routineId, {
+        await verifyManageSnapshot(operation, this.routines, operation.forBot?.botId ?? payload.botId);
+        if (!(await this.routines.remove(operation.routineId, {
           requestId: payload.requestId,
           messageId,
           botId: payload.botId,
@@ -1502,7 +1528,7 @@ export class RoutineRequestService {
           action: "delete",
           fingerprintVersion: ROUTINE_REQUEST_FINGERPRINT_VERSION,
           fingerprint,
-        })) {
+        }))) {
           throw new RoutineRequestError("That routine no longer exists", 404);
         }
         return operation.routineId;

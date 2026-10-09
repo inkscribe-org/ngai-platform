@@ -48,7 +48,7 @@ import {
 } from "./package-import.ts";
 import { pair, partHash, sha256Hex, type PartPair, type TeamPart } from "./package-parts.ts";
 import { storedPresetObject, type StoredPreset } from "./presets.ts";
-import type { RoutineManager } from "./routines.ts";
+import type { JacRoutines } from "./jac-routines.ts";
 import type { SkillListing, SkillPackageStamp } from "./skills.ts";
 import { sectionKey, type InstalledPackageMetadata, type Store, type StoreChange } from "./store.ts";
 import {
@@ -297,7 +297,16 @@ export interface OrgLibraryDeps {
   /** DATA_DIR; the library lives in DATA_DIR/org-library/. */
   dataDir: string;
   store: Store;
-  routines: Pick<RoutineManager, "packageStamps" | "update" | "listRoutines" | "remove">;
+  /** Stamps/updates against the scheduler. With the Jac seam
+   * (server/jac-routines.ts) reads come from its synchronous mirror and
+   * `update` may return a promise — switchOff's pause is fire-and-forget,
+   * the caller logs failures. An in-memory stub (tests) still fits. */
+  routines: Pick<JacRoutines, "packageStamps" | "listRoutines"> & {
+    update(id: string, patch: Parameters<JacRoutines["update"]>[1], request?: Parameters<JacRoutines["update"]>[2]): unknown;
+    /** Discard is fire-and-forget (discardPartial is synchronous): the
+     *  facade's detached remove returns void. */
+    remove(id: string, request?: Parameters<JacRoutines["remove"]>[1]): unknown;
+  };
   skills: {
     list(botId: string): SkillListing[];
     stamps(botId: string): Array<{ name: string; enabled: boolean; stamp: SkillPackageStamp }>;
@@ -971,8 +980,8 @@ export class OrgLibrary {
 
   /** POST /api/org-library/add — one click, no confirmation: the person's
    * click is the decision. Idempotent per install id. */
-  add(packageId: string, importDeps: PackageImportDeps):
-    OrgLibraryOutcome<{ alreadyAdded: true; installId: string } | { alreadyAdded: false; result: PackageImportResult }> {
+  async add(packageId: string, importDeps: PackageImportDeps):
+    Promise<OrgLibraryOutcome<{ alreadyAdded: true; installId: string } | { alreadyAdded: false; result: PackageImportResult }>> {
     const library = this.library;
     const entry = this.visibleEntry(packageId);
     if (!library || !entry) return refusal(404, "not_listed", NOT_LISTED);
@@ -1028,7 +1037,7 @@ export class OrgLibrary {
     }
     let result: PackageImportResult;
     try {
-      const imported = importPackageDocument(document.value, {
+      const imported = await importPackageDocument(document.value, {
         trust: "org",
         mode: "add",
         org: { installId, ref: entry.ref, packageId, sha256: release.sha256, publisher, adminOrigin: library.adminOrigin, organizationId: library.organizationId },

@@ -1,9 +1,9 @@
 #!/usr/bin/env -S node --experimental-strip-types
 // Thin, agent-friendly CLI over the same guarded MCP operations exposed to
 // external clients. It deliberately owns no second API client or wait loop.
-import { spawn, type ChildProcess } from "node:child_process";
-import { closeSync, mkdirSync, mkdtempSync, openSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { spawn, execFileSync, type ChildProcess } from "node:child_process";
+import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readdirSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs, type ParseArgsOptionsConfig } from "node:util";
@@ -347,7 +347,10 @@ export function verificationServerEnvironment(parentEnv: NodeJS.ProcessEnv, data
     APPDATA: join(dataDir, "AppData", "Roaming"),
     LOCALAPPDATA: join(dataDir, "AppData", "Local"),
     XDG_CONFIG_HOME: join(dataDir, ".config"),
-    XDG_CACHE_HOME: join(dataDir, ".cache"),
+    // The jac runtime cache is content-addressed by compiler identity
+    // (~830MB per extraction). Reuse the operator's warm cache instead of
+    // re-extracting per fixture; data itself stays in dataDir.
+    XDG_CACHE_HOME: parentEnv.XDG_CACHE_HOME || join(homedir(), ".cache"),
     XDG_DATA_HOME: join(dataDir, ".local", "share"),
     TEMP: fixtureTemp,
     TMP: fixtureTemp,
@@ -399,7 +402,44 @@ export function verificationServerEnvironment(parentEnv: NodeJS.ProcessEnv, data
     childEnv.OMB_TEST_DESKTOP_OWNER_TOKEN = parentEnv.OMB_TEST_DESKTOP_OWNER_TOKEN;
     childEnv.OMB_DESKTOP_PARENT = "1";
   }
+  // The Jac routines harness the server spawns as a sidecar: the binary is
+  // resolved against the parent environment because the child's PATH is
+  // sealed (a `jac` in ~/.local/bin or a jacup version would never be
+  // found otherwise). OMB_JAC=0 deliberately leaves the seam off.
+  const jacBin = resolveJacBinary(parentEnv);
+  if (jacBin) childEnv.OMB_JAC_BIN = jacBin;
   return childEnv;
+}
+
+/** The `jac` executable a fixture server could spawn: OMB_JAC_BIN as
+ * given, else the newest jacup install, else `jac` on the caller's PATH.
+ * Never throws — a sealed or bare PATH simply means "not available". */
+export function resolveJacBinary(env: NodeJS.ProcessEnv): string | null {
+  const explicit = env.OMB_JAC_BIN?.trim();
+  if (explicit) return explicit;
+  try {
+    const versionsDir = join(homedir(), ".local", "share", "jacup", "versions");
+    const versions = readdirSync(versionsDir)
+      .filter((entry) => /^\d+\.\d+\.\d+/.test(entry))
+      .sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
+    for (const version of versions) {
+      const candidate = join(versionsDir, version, "jac");
+      if (existsSync(candidate)) return candidate;
+    }
+  } catch { /* no jacup install */ }
+  try {
+    const found = execFileSync("which", ["jac"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], env }).trim();
+    if (found) return found.split("\n", 1)[0]!;
+  } catch { /* `which` missing or jac absent */ }
+  return null;
+}
+
+/** Whether a verification server would actually get a Jac routines
+ * harness: the seam is on (OMB_JAC unset or not "0") and a binary can be
+ * resolved. Routine e2e tests skip on this — with the seam off the server
+ * still boots but /api/routines answers 503. */
+export function jacHarnessAvailable(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.OMB_JAC !== "0" && resolveJacBinary(env) !== null;
 }
 
 /** Start one foreground-owned, fake-engine server with no access to user data. */
@@ -556,7 +596,8 @@ export async function launchVerificationServer(
       if (closed) return;
       closed = true;
       await waitForExit(child, { signal: "SIGTERM" });
-      await removeTempDir(dataDir);
+      // OMB_VERIFY_KEEP_DATA preserves the dataDir for post-mortems.
+      if (!parentEnv.OMB_VERIFY_KEEP_DATA) await removeTempDir(dataDir);
     },
   };
 }

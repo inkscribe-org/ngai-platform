@@ -1,8 +1,9 @@
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
-import { launchVerificationServer, runControlOmb } from "../scripts/control-omb.ts";
+import { jacHarnessAvailable, launchVerificationServer, runControlOmb } from "../scripts/control-omb.ts";
 
-it("passes the previous report to the real fake-engine turn only when continuity is enabled", async () => {
+const itJac = it.skipIf(!jacHarnessAvailable());
+itJac("passes the previous report to the real fake-engine turn only when continuity is enabled", async () => {
   const fixture = await launchVerificationServer();
   const env = { OPENMAUSBOT_URL: fixture.info.url };
   const api = async (method: string, path: string, body?: unknown) => {

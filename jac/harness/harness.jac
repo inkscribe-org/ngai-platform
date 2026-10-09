@@ -228,3 +228,89 @@ def:pub echo_opt_probe(thread_id: (str | None) = None, range_: (dict[str, any] |
         "mode": repr(mode),
     };
 }
+
+
+# --- routines module HTTP surface ---------------------------------------------
+# jac run mounts only the entry module's defs; re-bind every routines.jac
+# def:pub under the entry module so POST /function/<name> resolves. The
+# endpoint signatures come from the defs themselves; globs carry the binding.
+import from routines {
+    routine_boot as _routines_routine_boot,
+    routine_set_now as _routines_routine_set_now,
+    routine_tick as _routines_routine_tick,
+    routine_reset as _routines_routine_reset,
+    routine_pause as _routines_routine_pause,
+    routine_resume as _routines_routine_resume,
+    routine_state as _routines_routine_state,
+    routine_list as _routines_routine_list,
+    routine_package_stamps as _routines_routine_package_stamps,
+    routine_stamp_installed_package as _routines_routine_stamp_installed_package,
+    routine_list_runs as _routines_routine_list_runs,
+    routine_wake_hold as _routines_routine_wake_hold,
+    routine_active_run_for_bot as _routines_routine_active_run_for_bot,
+    routine_active_bot_run_for_bot as _routines_routine_active_bot_run_for_bot,
+    routine_is_active_thread as _routines_routine_is_active_thread,
+    routine_run_for_thread as _routines_routine_run_for_thread,
+    routine_create as _routines_routine_create,
+    routine_update as _routines_routine_update,
+    routine_remove as _routines_routine_remove,
+    routine_run_now as _routines_routine_run_now,
+    routine_cancel_run as _routines_routine_cancel_run,
+    routine_mark_seen as _routines_routine_mark_seen,
+    routine_mark_all_seen as _routines_routine_mark_all_seen,
+    routine_disable_for_bot as _routines_routine_disable_for_bot,
+    routine_disable_for_group as _routines_routine_disable_for_group,
+    routine_enqueue_webhook as _routines_routine_enqueue_webhook,
+    routine_webhook_run_receipt as _routines_routine_webhook_run_receipt,
+    routine_active_webhook_run_count as _routines_routine_active_webhook_run_count,
+    routine_cancel_queued_webhook as _routines_routine_cancel_queued_webhook,
+    routine_runtime_event as _routines_routine_runtime_event,
+    routine_fail_thread as _routines_routine_fail_thread,
+    routine_finish_goal_run as _routines_routine_finish_goal_run,
+    routine_receipt as _routines_routine_receipt,
+    routine_receipt_owners as _routines_routine_receipt_owners,
+    routine_forget_receipt as _routines_routine_forget_receipt,
+    routine_forget_receipts_for_thread as _routines_routine_forget_receipts_for_thread,
+    routine_reconcile_receipts as _routines_routine_reconcile_receipts,
+    routine_next_occurrence as _routines_routine_next_occurrence,
+    routines_tick as _routines_routines_tick,
+}
+glob routine_boot: any = _routines_routine_boot;
+glob routine_set_now: any = _routines_routine_set_now;
+glob routine_tick: any = _routines_routine_tick;
+glob routine_reset: any = _routines_routine_reset;
+glob routine_pause: any = _routines_routine_pause;
+glob routine_resume: any = _routines_routine_resume;
+glob routine_state: any = _routines_routine_state;
+glob routine_list: any = _routines_routine_list;
+glob routine_package_stamps: any = _routines_routine_package_stamps;
+glob routine_stamp_installed_package: any = _routines_routine_stamp_installed_package;
+glob routine_list_runs: any = _routines_routine_list_runs;
+glob routine_wake_hold: any = _routines_routine_wake_hold;
+glob routine_active_run_for_bot: any = _routines_routine_active_run_for_bot;
+glob routine_active_bot_run_for_bot: any = _routines_routine_active_bot_run_for_bot;
+glob routine_is_active_thread: any = _routines_routine_is_active_thread;
+glob routine_run_for_thread: any = _routines_routine_run_for_thread;
+glob routine_create: any = _routines_routine_create;
+glob routine_update: any = _routines_routine_update;
+glob routine_remove: any = _routines_routine_remove;
+glob routine_run_now: any = _routines_routine_run_now;
+glob routine_cancel_run: any = _routines_routine_cancel_run;
+glob routine_mark_seen: any = _routines_routine_mark_seen;
+glob routine_mark_all_seen: any = _routines_routine_mark_all_seen;
+glob routine_disable_for_bot: any = _routines_routine_disable_for_bot;
+glob routine_disable_for_group: any = _routines_routine_disable_for_group;
+glob routine_enqueue_webhook: any = _routines_routine_enqueue_webhook;
+glob routine_webhook_run_receipt: any = _routines_routine_webhook_run_receipt;
+glob routine_active_webhook_run_count: any = _routines_routine_active_webhook_run_count;
+glob routine_cancel_queued_webhook: any = _routines_routine_cancel_queued_webhook;
+glob routine_runtime_event: any = _routines_routine_runtime_event;
+glob routine_fail_thread: any = _routines_routine_fail_thread;
+glob routine_finish_goal_run: any = _routines_routine_finish_goal_run;
+glob routine_receipt: any = _routines_routine_receipt;
+glob routine_receipt_owners: any = _routines_routine_receipt_owners;
+glob routine_forget_receipt: any = _routines_routine_forget_receipt;
+glob routine_forget_receipts_for_thread: any = _routines_routine_forget_receipts_for_thread;
+glob routine_reconcile_receipts: any = _routines_routine_reconcile_receipts;
+glob routine_next_occurrence: any = _routines_routine_next_occurrence;
+glob routines_tick: any = _routines_routines_tick;

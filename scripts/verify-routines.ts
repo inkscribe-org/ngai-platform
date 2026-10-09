@@ -17,7 +17,9 @@ const api = fixtureApi(fixture.info.url, {
   observe: (call) => { if (call.method !== "GET") evidence.push(call); },
 });
 async function until(check: () => boolean | Promise<boolean>) {
-  const deadline = Date.now() + 20_000;
+  // Jac dispatch -> startTurn -> fake provider -> run_finished bridge ->
+  // mirror is a multi-hop loop; 20s was tuned for in-process managers.
+  const deadline = Date.now() + (Number(process.env.OMB_VERIFY_STEP_MS) || 120_000);
   while (!await check()) {
     if (Date.now() > deadline) throw new Error(`Fixture timed out; see ${fixture.info.logPath}`);
     await new Promise((resolve) => setTimeout(resolve, 100));
@@ -53,7 +55,10 @@ try {
   });
   try {
     const reply = new Promise<any>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error("MCP proposal timed out")), 15_000);
+      // A fresh fixture home re-extracts the jac runtime and recompiles the
+      // whole harness (minutes) before any def answers; the proposal's
+      // occurrence preview blocks on that first boot.
+      const timer = setTimeout(() => reject(new Error("MCP proposal timed out")), 420_000);
       const lines = createInterface({ input: proxy.stdout });
       lines.on("line", (line) => {
         try {
@@ -107,7 +112,12 @@ try {
   // actual persisted records before fixture cleanup, without calling them an API response.
   const routineFile = join(fixture.info.dataDir, "routines.json");
   const persisted = !final && existsSync(routineFile) ? JSON.parse(readFileSync(routineFile, "utf8")) : undefined;
-  writeFileSync(`${fixture.info.logPath}.json`, JSON.stringify({ evidence, final, persisted }, null, 2));
+  // Diagnostics must never mask the run's own failure with a disk error.
+  try {
+    writeFileSync(`${fixture.info.logPath}.json`, JSON.stringify({ evidence, final, persisted }, null, 2));
+  } catch (writeError) {
+    console.error(`evidence write failed: ${(writeError as Error).message}`);
+  }
   await ui?.close();
   await fixture.close();
 }

@@ -3,9 +3,10 @@ import { connect, type Socket } from "node:net";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { expect, it } from "vitest";
-import { launchVerificationServer, runControlOmb } from "../scripts/control-omb.ts";
+import { jacHarnessAvailable, launchVerificationServer, runControlOmb } from "../scripts/control-omb.ts";
 
-it("reports every run into the bot's main thread while fresh executions, approvals, deletion and unread stay reachable", async () => {
+const itJac = it.skipIf(!jacHarnessAvailable());
+itJac("reports every run into the bot's main thread while fresh executions, approvals, deletion and unread stay reachable", async () => {
   const fixture = await launchVerificationServer();
   const evidence: unknown[] = [{ fixture: fixture.info }];
   let broker: Socket | undefined;
@@ -145,7 +146,7 @@ it("reports every run into the bot's main thread while fresh executions, approva
   }
 }, 90_000);
 
-it("reports a routine made in another chat into the bot's main thread, not that chat or a new results thread", async () => {
+itJac("reports a routine made in another chat into the bot's main thread, not that chat or a new results thread", async () => {
   const fixture = await launchVerificationServer(process.env, undefined, undefined, undefined, undefined, { scripted: true });
   const evidence: unknown[] = [{ fixture: fixture.info }];
   const planPath = join(fixture.info.dataDir, "room-plan.json");
