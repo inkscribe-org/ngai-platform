@@ -38,6 +38,7 @@ import type {
   SendTurnInput,
   SteerOutcome,
   TextGenerationOptions,
+  TextGenerationUsage,
   TurnStartResult,
 } from "./contracts.ts";
 import { jacEnabled, jacOpUnordered } from "./jac-routines.ts";
@@ -149,15 +150,20 @@ function makeInstance(inner: ProviderInstance, instanceId: string): ProviderInst
   return {
     ...inner,
     // The declarative surface (displayName, models catalog, auth method) is
-    // the TS driver's; behavior is Jac's.
+    // the TS driver's; behavior is Jac's. The catalog stays a live read: a
+    // spread would freeze a refreshable catalog (openai-compat's /models).
+    get models() {
+      return inner.models;
+    },
     snapshot: async () => {
       try {
         return await driverOp<ProviderSnapshot>("snapshot", { instance_id: instanceId });
       } catch (error) {
-        // 501: this kind keeps its snapshot (version/login probes, account
-        // identity) node-side — the declarative half answers.
-        if ((error as DriverError).status === 501) return inner.snapshot();
-        console.error(`jac-drivers: snapshot ${instanceId}:`, error instanceof Error ? error.message : String(error));
+        // 501: the kind keeps its snapshot node-side (version/login probes,
+        // account identity, key-rejection state) — the declarative half answers.
+        if ((error as DriverError).status !== 501) {
+          console.error(`jac-drivers: snapshot ${instanceId}:`, error instanceof Error ? error.message : String(error));
+        }
         return inner.snapshot();
       }
     },
@@ -170,7 +176,14 @@ function makeInstance(inner: ProviderInstance, instanceId: string): ProviderInst
           const context = inner.prepareJacTurn ? await inner.prepareJacTurn(turn) : undefined;
           const result = await driverOp<{ turn_id?: string; turnId?: string }>("send_turn", {
             instance_id: instanceId,
-            turn: context && Object.keys(context).length ? { ...turn, _jac: context } : turn,
+            // The catalog (and its default) is node's; a turn without a
+            // model carries the current default for Jac to resolve. Node-held
+            // account context rides as `_jac`.
+            turn: {
+              ...turn,
+              ...(turn.model ? {} : { defaultModel: inner.models.default }),
+              ...(context && Object.keys(context).length ? { _jac: context } : {}),
+            },
           });
           const turnId = result.turnId ?? result.turn_id;
           if (typeof turnId !== "string" || !turnId) {
@@ -233,12 +246,20 @@ function makeInstance(inner: ProviderInstance, instanceId: string): ProviderInst
       },
     },
     generateText: inner.generateText
-      ? (prompt: string, options?: TextGenerationOptions) =>
-          oneShotOp<{ text?: string }>("generate_text", {
+      ? async (prompt: string, options?: TextGenerationOptions) => {
+          options?.signal?.throwIfAborted();
+          // Callbacks and signals cannot cross the op queue: Jac answers the
+          // billed usage (and a failure) in-band, replayed here in order.
+          const r = await oneShotOp<{ text?: string; failure?: string; usage?: TextGenerationUsage }>("generate_text", {
             instance_id: instanceId,
             prompt,
-            options,
-          }).then((r) => r.text ?? "")
+            options: { defaultModel: inner.models.default },
+          });
+          if (r.usage && options?.onUsage) options.onUsage(r.usage);
+          if (typeof r.failure === "string") throw new Error(r.failure);
+          options?.signal?.throwIfAborted();
+          return r.text ?? "";
+        }
       : undefined,
     reviewPermission: inner.reviewPermission
       ? (prompt: string, _signal?: AbortSignal) =>

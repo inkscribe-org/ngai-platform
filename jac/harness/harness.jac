@@ -488,3 +488,10 @@ glob workspace_backup_read_pending: any = _workspace_backup_read_pending;
 glob workspace_backup_apply_pending: any = _workspace_backup_apply_pending;
 glob workspace_backup_read_last: any = _workspace_backup_read_last;
 glob workspace_backup_remove_job: any = _workspace_backup_remove_job;
+
+# --- openai-compat driver (chat-completions runtime) --------------------------
+# The import is the registration: driver_openai_chat registers the
+# openai-compat kind into drivers._impls at boot (driver_openai_chat*.jac).
+import from driver_openai_chat {
+    create_openai_chat_runtime as _openai_chat_create_runtime,
+}

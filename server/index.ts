@@ -208,7 +208,7 @@ import { ledgerCost } from "./model-prices.ts";
 import type { PriceList } from "./prices.ts";
 import type { RequestAuth } from "./request-auth.ts";
 import { checkProviderKey, PROVIDER_KEY_KINDS, providerBaseUrl, type ProviderKeyKind } from "./provider-key-check.ts";
-import { forgetKey, noteKeyAccepted, noteKeyRejected, onKeyRejectionChange } from "./key-rejections.ts";
+import { forgetKey, noteKeyAccepted, noteKeyRejected, noteKeyVerdict, onKeyRejectionChange } from "./key-rejections.ts";
 import { assertWithinBudget, noteSpend, spendAlertText, spendState, takeSpendAlert } from "./spend.ts";
 import { fleetAvailable, fleetRequest, fleetSocketPath } from "./fleet-client.ts";
 import { entitled } from "./enterprise.ts";
@@ -11381,6 +11381,12 @@ const routineBridgeOps: Record<string, (payload: BridgePayload) => unknown> = {
   // and performs every Store mutation through this one op: {call, args},
   // one synchronous Store call each (server/jac-team-backup.ts).
   team_store: (payload) => teamStoreCall(store, payload),
+  // A Jac chat-completions driver's verdict on a saved key (a 401, or a
+  // later success). Only the key's fingerprint crosses the bridge.
+  key_verdict: (payload) => {
+    noteKeyVerdict(bridgeString(payload.url), bridgeString(payload.fingerprint), payload.rejected === true);
+    return { ok: true };
+  },
   has_pending_delegations: (payload) => {
     // Jac sends the requester's own thread as `thread_id`; a standing
     // external runtime sends excludeThreadId. Both mean "not mine".

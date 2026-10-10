@@ -159,7 +159,11 @@ Learned during the phase-0 spike (`jac/spike/`); keep updated as we hit more:
     tuple unpacking `a, b = f()` is a parse error (index instead);
     `os.killpg(pid, sig)` fails E1053 on the int param (route the
     int through a nested def); reserved words beyond the documented
-    set: `entry`, `own`, `obj`, `root`, `case`, `override`.
+    set: `entry`, `own`, `obj`, `root`, `case`, `override`,
+    `node`, `include`, `report`.
+  - `raise x` where `x` is `any`-typed (`raise box["error"]`) is E1090
+    "Cannot raise Any" (checker defect, also on 0.37.25). Workaround:
+    bind it first, `err: Exception = box["error"]; raise err;`.
 - `jac/harness/driver_codex.jac` (+ `_support`) ports the codex adapter
   (kind `codex`): app-server JSON-RPC, approvals/questions, steer,
   protocol interrupt → kill escalation, retries, resume recovery. One
@@ -173,6 +177,19 @@ Learned during the phase-0 spike (`jac/spike/`); keep updated as we hit more:
   falls back to the TS snapshot. `driver_codex.test.jac` drives the real
   `server/testing/fake-codex-app-server.ts`; run `jac test` with
   `TMPDIR=~/.cache/jac/tmp` (the embedded Postgres socket dir).
+- openai-compat (chat-completions) on Jac: `driver_openai_chat.jac`
+  (runtime + approval gate + the openai-compat options/registration),
+  `_protocol` (tool-call accumulator, error verdicts), `_mcp` (per-turn
+  stdio MCP sessions, images, AbortSignal), `_schema` (strict JSON
+  Schema validator standing in for Ajv). cerebras/mistral/minimax/grok
+  reuse it with a `_<kind>_options` + `chat_runtime_impl` registration.
+  Snapshot stays node-side (kind answers 501; key-rejection state is
+  node's `key-rejections.ts`, fed by bridge op `key_verdict` carrying a
+  key fingerprint). The shim sends `defaultModel` with model-less turns
+  and replays generateText usage/failure returned in-band. A test annex
+  merges into its base module: helper names must not shadow base defs
+  (a test `respond` replaced the registered impl). `jac test` needs
+  `TMPDIR=~/.cache/jac/tmp` to find the shared embedded Postgres.
 ## 8. Porting a phase-4 subsystem (recipe, from webhooks 2026-10-10)
 
 Webhooks (`jac/harness/webhooks.jac` + `server/jac-webhooks.ts`) is the

@@ -337,6 +337,13 @@ def:pub driver_generate_text(
     }
     try {
         text = generate(inst, prompt or "", options if isinstance(options, dict) else {});
+        # A kind may answer {text|failure, usage}: node's onUsage callback
+        # cannot cross the op queue, so the shim replays the usage report.
+        if isinstance(text, dict) {
+            out: dict[str, any] = {"ok": True};
+            out.update(text);
+            return out;
+        }
         return {"ok": True, "text": text};
     } except Exception as e {
         return _fail(str(e), 500);

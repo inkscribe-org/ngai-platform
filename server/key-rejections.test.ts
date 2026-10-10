@@ -1,5 +1,6 @@
 import { expect, it, vi } from "vitest";
-import { forgetKey, keyRejected, noteKeyAccepted, noteKeyRejected, onKeyRejectionChange, rejectsKey } from "./key-rejections.ts";
+import { createHash } from "node:crypto";
+import { forgetKey, keyRejected, noteKeyAccepted, noteKeyRejected, noteKeyVerdict, onKeyRejectionChange, rejectsKey } from "./key-rejections.ts";
 
 it.each([
   [401, `{"error":{"message":"Incorrect API key provided","code":"invalid_api_key"}}`, true],
@@ -41,4 +42,16 @@ it("marks a key per endpoint until it is accepted or forgotten, without keeping 
   expect(keyRejected("https://other.invalid/v1", "fixture-rejected-key")).toBe(false);
   expect(listener).toHaveBeenCalledTimes(5);
   stop();
+});
+
+it("applies a Jac harness verdict reported by fingerprint as the same per-endpoint mark", () => {
+  const url = "https://fixture-jac.invalid/v1";
+  const key = "fixture-jac-key";
+  const fingerprint = createHash("sha256").update(key.trim()).digest("hex").slice(0, 32);
+  noteKeyVerdict(`${url}/`, fingerprint, true);
+  expect(keyRejected(url, key)).toBe(true);
+  noteKeyVerdict(url, fingerprint, false);
+  expect(keyRejected(url, key)).toBe(false);
+  noteKeyVerdict(url, "not-a-fingerprint", true);
+  expect(keyRejected(url, key)).toBe(false);
 });

@@ -31,6 +31,18 @@ export function noteKeyAccepted(url: string, key: string): void {
   if (rejected.size > 0 && rejected.delete(markOf(url, key))) changed();
 }
 
+/** A verdict from the Jac harness, which holds the key but reports only its
+ * fingerprint over the bridge (op `key_verdict`). */
+export function noteKeyVerdict(url: string, keyFingerprint: string, isRejected: boolean): void {
+  if (!/^[0-9a-f]{32}$/.test(keyFingerprint)) return;
+  const mark = `${url.trim().replace(/\/+$/, "")} ${keyFingerprint}`;
+  if (isRejected) {
+    if (rejected.has(mark)) return;
+    rejected.add(mark);
+    changed();
+  } else if (rejected.size > 0 && rejected.delete(mark)) changed();
+}
+
 /** Drops every mark on this key, whatever endpoint it was used against. */
 export function forgetKey(key: string): void {
   if (rejected.size === 0) return;
