@@ -460,6 +460,7 @@ import {
   mirrorActiveRunForBot, mirrorPackageStamps, mirrorBusy,
   ensureJacHarness,
 } from "./jac-routines.ts";
+import { jacDriverEvent, jacifyDrivers } from "./jac-drivers.ts";
 import { CalendarCallManager, type CalendarCall } from "./calendar-calls.ts";
 import { BUILT_IN_BROWSER_SYSTEM_PROMPT } from "./browser-engine.ts";
 import { BrowserRuntime, browserRuntimeEnv } from "./browser-runtime.ts";
@@ -846,7 +847,7 @@ function customDomainStatus() {
     serverIpv4: DESKTOP_MANAGED ? null : customDomainIpv4(),
   };
 }
-const registry = new ProviderRegistry(BUILT_IN_DRIVERS);
+const registry = new ProviderRegistry(jacifyDrivers(BUILT_IN_DRIVERS));
 // The approval gates below hand this their model selection — or a driver
 // view they already hold — and let the registry resolve the driver, instead
 // of each site unwrapping registry.cliTarget(...)?.driverKind itself.
@@ -11311,6 +11312,13 @@ const routineBridgeOps: Record<string, (payload: BridgePayload) => unknown> = {
   // Mirror first: the bridge handler is inside an in-flight op and may not
   // re-enter the serialized op queue (server/jac-routines.ts).
   emit: (payload) => { const frame = payload.payload as Record<string, unknown>; mirrorApplyFrame(frame); broadcast(frame); return { ok: true }; },
+  // Drivers in the Jac harness emit RuntimeEvents through this op; the shim
+  // adapter's listeners (the EventBus attach) see them exactly as an
+  // in-process adapter's events.
+  driver_event: (payload) => jacDriverEvent(
+    bridgeString(field(payload, "instanceId", "instance_id")),
+    payload.event as RuntimeEvent,
+  ),
   has_pending_delegations: (payload) => {
     // Jac sends the requester's own thread as `thread_id`; a standing
     // external runtime sends excludeThreadId. Both mean "not mine".

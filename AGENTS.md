@@ -115,3 +115,48 @@ Learned during the phase-0 spike (`jac/spike/`); keep updated as we hit more:
   `timeout` exit 124 after printing the summary JSON is a pass). Fixture
   dataDirs self-clean; `OMB_VERIFY_KEEP_DATA=1` preserves them for
   post-mortems. `OMB_VERIFY_STEP_MS` widens the per-step wait.
+
+## 7. Drivers on Jac (phase 3, done 2026-10-10)
+
+- `server/jac-drivers.ts` is the seam: a shim `ProviderDriver` whose
+  `create()` keeps the TS driver's declarative surface (kind, metadata,
+  install, catalog, decodeConfig, auth) and swaps only the adapter for a
+  facade over serialized `jacOp` calls (`driver_send_turn` →
+  `driver_*` ops in `jac/harness/drivers.jac`). `respondToRequest`
+  fails closed (`"unavailable"`) when the harness is down.
+- Gating: `OMB_JAC_DRIVERS` is a comma list of kinds or `all`; unset
+  means the TS drivers run unchanged. `scripts/control-omb.ts`
+  forwards `OMB_JAC_DRIVERS` into verification fixture children, and
+  `resolveJacBinary` prefers the jacup version pinned by
+  `jac/harness/jac.toml` (`jac-version`). The old newest-jacup
+  fallback silently picked 0.37.25 whose compiler generation has a
+  cold prepare-cache slot — every fixture sidecar recompiled ~2 min
+  and blew the golden eval's 20 s step budget. If a boot ever prints
+  `[jac] Compiling server modules...` again, suspect a version or
+  source-stamp mismatch, not the eval.
+- Events flow Jac → node: `emit_event` in `drivers.jac` bridges
+  `driver_event` ops to `/api/internal/routine-bridge`; the shim
+  adapter re-emits into the unchanged bus (stamping, delta-merge,
+  SSE). `hasSession` mirrors live turns off the event stream because
+  the Jac side owns the live processes.
+- `jac/harness/driver_claude.jac` (+ `_broker`/`_support`) is the full
+  claudeAgent port: version-floor argv gating, MCP config file (0600)
+  + ogb permission-proxy mount, AF_UNIX permission broker
+  (`driver_claude_broker.jac`), process-group spawn/kill, stream-json
+  parsing, argsKey warm-reuse, retry + resume-recovery,
+  steered-continuation grace/silence timers. Login/device auth stays
+  node-side (shim keeps the inner TS instance's auth methods).
+  `driver_stub` in `drivers.jac` is the seam fixture (fake-CLI
+  analogue), not dead code.
+- 0.37.21 quirks hit by the port (workarounds in-tree; the first is a
+  real defect fixed upstream by 0.37.25 — bump the pin to shed the
+  rest deliberately, not by accident):
+  - `glob _s: dict[str, any] = {"k": None}` narrows the slot to
+    NoneType — `_s["k"] = "str"` is E1001 at compile. Workaround:
+    `_state.update({...})` (see `drivers.jac _resolve_bridge_url`).
+  - No lambda, no backslash line continuations, no `pass` statement;
+    conditional expressions reject a middle `is not None` test;
+    tuple unpacking `a, b = f()` is a parse error (index instead);
+    `os.killpg(pid, sig)` fails E1053 on the int param (route the
+    int through a nested def); reserved words beyond the documented
+    set: `entry`, `own`, `obj`, `root`.

@@ -218,11 +218,16 @@ core turn pipeline on the runtime.
 
 - M0: spike report + upstream PRs filed (this plan updated with go/no-go). **Done 2026-10-07 — GO, zero defects.**
 - M1: Jac serves threads/messages/memory off the same SQLite; conformance
-  job green in CI; router live in dev + deploy. **In progress 2026-10-07:**
-  `jac/harness/` has the ported layer (db/messages/memory/sessions/
-  checkpoints/lease/graph), conformance corpus green (62 ops, byte-identical
-  `messages.db` dumps), 14/14 ported test invariants pass. Store registry
-  (bots.json/groups.json) + router wiring remain.
+  job green in CI; router live in dev + deploy. **Done 2026-10-08:** Jac
+  owns the ported layer — `jac/harness/{db,messages,memory,sessions,
+  checkpoints,lease,graph,store}.jac` (store: bots/groups/config JSON in
+  `store.jac`); conformance corpuses byte-identical and `message_db.test.jac`
+  invariants green. Live node reads still use `message-db.ts`/`store.ts`
+  (the dual-writer rule keeps one writer per table); Jac's data surface
+  serves the conformance corpus and the driver/routine subsystems. The
+  node↔Jac split router from the target diagram is superseded by the
+  op-queue/bridge seam (`jacOp` + `/api/internal/routine-bridge`) — one
+  process answers clients, Jac is a supervised sidecar.
 - M2: routines live on Jac. **Done 2026-10-08:** `jac/harness/routines.jac`
   owns the scheduler (~4,300 lines: cron/interval/once evaluation, request
   receipts, continuity carry, results threads, webhook enqueue, deferral,
@@ -234,7 +239,31 @@ core turn pipeline on the runtime.
   47/47, `jac test` 107/107, `scripts/verify-routines.ts` green through a
   live fixture. The in-process `RoutineManager` and its tests are deleted;
   adjacent tests use `server/testing/routine-stub.ts`.
-- M3: drivers + bus on Jac; golden suites byte-exact.
+- M3: drivers + bus on Jac; golden suites byte-exact. **Done 2026-10-10:**
+  the seam is live — `server/jac-drivers.ts` (shim `ProviderDriver`: create()
+  keeps the TS driver's declarative surface while the adapter forwards
+  sendTurn/interruptTurn/respondToRequest/steer/stopAll/dispose/snapshot over
+  the serialized `jacOp` queue; `hasSession` mirrors live turns off the event
+  stream), `jac/harness/drivers.jac` (`driver_*` ops, per-kind dispatch,
+  `driver_stub` fixture kind), `driver_event` bridge op in index.ts
+  (events re-enter the unchanged bus → fold → SSE path), gated by
+  `OMB_JAC_DRIVERS=<kind,...|all>` (unset = TS drivers, matching routines'
+  opt-in posture; the gate is forwarded into verification fixture children by
+  `verificationServerEnvironment`, and `resolveJacBinary` prefers the
+  jacup version pinned by `jac/harness/jac.toml` — the newest-jacup fallback
+  silently ran 0.37.25, whose compiler generation has a cold prepare-cache
+  slot, so every fixture sidecar recompiled for ~2 min and blew the eval's
+  20 s step budget). `driver_claude.jac` (+`_broker`/`_support`) is the full
+  claudeAgent port: argv/env floors, MCP block + ogb permission-proxy mount,
+  AF_UNIX permission broker, process-group spawn, stream-json parsing,
+  warm-reuse/argsKey, retry/resume-recovery, steered-continuation timers.
+  Seam smoke green (stub round-trip through a real `jac run` child); golden
+  parity green both ways: TS baseline and `OMB_JAC_DRIVERS=claudeAgent` each
+  replay `golden-handoff` with zero trace drift. SSE stays node-side until
+  phase 5 — /api/events is one endpoint for all frame kinds, so topics can't
+  split without forking the stream; the emit bridge carries driver events
+  into the existing broadcast path instead (same reasoning as routines'
+  emit op).
 - M4: long-tail subsystems on Jac; verify scripts green.
 - M5: `server/index.ts` deleted; companion + enterprise ported; single
   process again; plan closed out in `docs/verification/`.

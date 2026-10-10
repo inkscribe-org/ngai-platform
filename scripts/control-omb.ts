@@ -2,7 +2,7 @@
 // Thin, agent-friendly CLI over the same guarded MCP operations exposed to
 // external clients. It deliberately owns no second API client or wait loop.
 import { spawn, execFileSync, type ChildProcess } from "node:child_process";
-import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readdirSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -408,6 +408,10 @@ export function verificationServerEnvironment(parentEnv: NodeJS.ProcessEnv, data
   // found otherwise). OMB_JAC=0 deliberately leaves the seam off.
   const jacBin = resolveJacBinary(parentEnv);
   if (jacBin) childEnv.OMB_JAC_BIN = jacBin;
+  // Driver-kind gate for the Jac seam (comma list or "all"); like OMB_JAC_BIN
+  // it is resolved from the parent because the child env is sealed.
+  const jacDrivers = parentEnv.OMB_JAC_DRIVERS?.trim();
+  if (jacDrivers) childEnv.OMB_JAC_DRIVERS = jacDrivers;
   return childEnv;
 }
 
@@ -422,6 +426,14 @@ export function resolveJacBinary(env: NodeJS.ProcessEnv): string | null {
     const versions = readdirSync(versionsDir)
       .filter((entry) => /^\d+\.\d+\.\d+/.test(entry))
       .sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
+    // The harness pins its compiler (jac/harness/jac.toml jac-version); a
+    // different jacup version compiles a different prepare-cache slot and
+    // recompiles from scratch on every sidecar boot. Prefer the pinned one.
+    try {
+      const toml = readFileSync(join(ROOT, "jac", "harness", "jac.toml"), "utf8");
+      const pinned = toml.match(/^jac-version\s*=\s*"(\d+\.\d+\.\d+)"/m)?.[1];
+      if (pinned && versions.includes(pinned)) return join(versionsDir, pinned, "jac");
+    } catch { /* missing toml falls through to newest */ }
     for (const version of versions) {
       const candidate = join(versionsDir, version, "jac");
       if (existsSync(candidate)) return candidate;

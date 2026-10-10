@@ -19,8 +19,8 @@ import type {
  * crash-recovery tests carry state across a restarted fixture.
  */
 export class RoutineStub {
-  private routines: Routine[] = [];
-  private counter = 0;
+  protected routines: Routine[] = [];
+  protected counter = 0;
 
   constructor(private readonly options: { file?: string } = {}) {
     if (options.file && existsSync(options.file)) {
@@ -34,7 +34,7 @@ export class RoutineStub {
     }
   }
 
-  private persist(): void {
+  protected persist(): void {
     if (!this.options.file) return;
     mkdirSync(dirname(this.options.file), { recursive: true });
     writeFileSync(this.options.file, JSON.stringify({ version: 1, routines: this.routines, runs: [] }));
@@ -62,7 +62,6 @@ export class RoutineStub {
     const routine = this.routines.find((candidate) => candidate.id === id);
     if (!routine) return null;
     Object.assign(routine, patch);
-    routine.updatedAt += 1;
     this.persist();
     return routine;
   }

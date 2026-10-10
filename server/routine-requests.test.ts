@@ -15,8 +15,166 @@ import {
   type RoutineRequestStore,
   type RoutineToolDefinitionInput,
 } from "./routine-requests.ts";
-import { RoutineManager, nextOccurrence as scheduleNextOccurrence, type RoutineInput } from "./routines.ts";
+import { nextOccurrence as scheduleNextOccurrence, type Routine, type RoutineInput, type RoutineRequestCommit, type RoutineRequestReceipt, type RoutineRun } from "./routines.ts";
+import { RoutineStub } from "./testing/routine-stub.ts";
 import type { JsonValue } from "./schema.ts";
+
+/** The deleted in-process manager's stand-in: RoutineStub's persistence
+ * surface plus the scheduling semantics the request-service tests pin —
+ * nextRunAt upkeep, once auto-disable, run recording, and request receipts.
+ * The real scheduler is jac/harness/routines.jac; this mirrors the subset of
+ * its lifecycle these tests exercise. */
+class TestRoutineManager extends RoutineStub {
+  private readonly now: () => number;
+  private runs: RoutineRun[] = [];
+  private receipts = new Map<string, RoutineRequestReceipt>();
+  private runCounter = 0;
+
+  constructor(options: { file?: string; now: () => number }) {
+    super({ file: options.file });
+    this.now = options.now;
+  }
+
+  private remember(request: RoutineRequestCommit, resultId: string): void {
+    this.receipts.set(request.requestId, {
+      ...request,
+      resultId,
+      appliedAt: this.now(),
+    });
+  }
+
+  override create(input: RoutineInput, request?: RoutineRequestCommit): Routine {
+    const created = super.create({
+      ...input,
+      attachments: input.attachments ?? [],
+      ...(input.durationMinutes === undefined ? { durationMinutes: 30 } : {}),
+      ...(request ? { sourceThreadId: request.threadId } : {}),
+    } as RoutineInput);
+    // The real scheduler returns detached copies; mutate the stored entry and
+    // copy out, or revision comparisons would compare an object with itself.
+    const routine = this.routines.find((candidate) => candidate.id === created.id)!;
+    routine.createdAt = this.now();
+    routine.updatedAt = this.now();
+    routine.nextRunAt = routine.enabled ? scheduleNextOccurrence(routine.schedule, this.now()) : null;
+    if (routine.timeoutMinutes === null) delete routine.timeoutMinutes;
+    if (routine.overlap !== "queue") delete routine.overlap;
+    if (request) this.remember(request, routine.id);
+    return { ...routine };
+  }
+
+  override update(id: string, patch: Partial<RoutineInput>, request?: RoutineRequestCommit): Routine | null {
+    const existing = this.routines.find((candidate) => candidate.id === id);
+    const next: Partial<RoutineInput> = { ...patch };
+    if (patch.schedule !== undefined && existing) {
+      // Stored-schedule merge (routines.jac _merge_schedule_update): a type
+      // change replaces wholesale; same-type merges keep fields the patch
+      // doesn't mention, and null clears a field entirely.
+      const incoming = patch.schedule as Record<string, unknown>;
+      const merged: Record<string, unknown> =
+        incoming.type === existing.schedule.type ? { ...existing.schedule } : {};
+      for (const [key, value] of Object.entries(incoming)) {
+        if (value === null || value === undefined) delete merged[key];
+        else merged[key] = value;
+      }
+      // SAFETY: merged is a stored RoutineSchedule — the test file builds it
+      // from validated schedule inputs only.
+      next.schedule = merged as RoutineInput["schedule"];
+    }
+    if (!super.update(id, next, request)) return null;
+    const routine = this.routines.find((candidate) => candidate.id === id)!;
+    routine.updatedAt = Math.max(this.now(), routine.updatedAt + 1);
+    if (patch.timeoutMinutes === null) delete routine.timeoutMinutes;
+    if (routine.overlap !== "queue") delete routine.overlap;
+    if (patch.schedule !== undefined || patch.enabled !== undefined) {
+      routine.nextRunAt = routine.enabled ? scheduleNextOccurrence(routine.schedule, this.now()) : null;
+    }
+    if (request) this.remember(request, routine.id);
+    return { ...routine };
+  }
+
+  override remove(id: string, request?: RoutineRequestCommit): boolean {
+    const removed = super.remove(id, request);
+    if (removed && request) this.remember(request, id);
+    return removed;
+  }
+
+  private recordRun(routine: Routine, fields: Partial<RoutineRun> & Pick<RoutineRun, "scheduledFor" | "manual" | "triggerSource">): RoutineRun {
+    this.runCounter += 1;
+    const run: RoutineRun = {
+      id: `run-${this.runCounter}`,
+      routineId: routine.id,
+      routineName: routine.name,
+      prompt: routine.prompt,
+      target: routine.target,
+      groupId: routine.groupId,
+      botId: routine.botId,
+      runOn: routine.runOn,
+      status: "queued",
+      sourceThreadId: routine.sourceThreadId,
+      resultsThreadId: routine.resultsThreadId,
+      createdAt: this.now(),
+      ...fields,
+    };
+    this.runs.push(run);
+    return run;
+  }
+
+  runNow(id: string, request?: RoutineRequestCommit): RoutineRun | null {
+    if (request) {
+      const committed = this.receipts.get(request.requestId);
+      if (committed) return this.runs.find((run) => run.id === committed.resultId) ?? null;
+    }
+    const routine = this.routines.find((candidate) => candidate.id === id);
+    if (!routine) return null;
+    const run = this.recordRun(routine, {
+      durationMinutes: routine.durationMinutes,
+      timeoutMinutes: routine.timeoutMinutes,
+      attachments: routine.attachments,
+      scheduledFor: this.now(),
+      manual: true,
+      triggerSource: "manual",
+      sourceThreadId: request?.threadId ?? routine.sourceThreadId,
+    });
+    if (request) this.remember(request, run.id);
+    return run;
+  }
+
+  listRuns(): RoutineRun[] {
+    return this.runs;
+  }
+
+  routineRequestReceipt(requestId: string): RoutineRequestReceipt | null {
+    return this.receipts.get(requestId) ?? null;
+  }
+
+  forgetRoutineRequestReceipt(request: RoutineRequestCommit): boolean {
+    return this.receipts.delete(request.requestId);
+  }
+
+  /** Fire routines whose nextRunAt arrived — the subset of the Jac tick the
+   * tests assert on: a run is recorded, interval routines reschedule, and
+   * one-time routines auto-disable. */
+  async tick(): Promise<void> {
+    const now = this.now();
+    for (const routine of this.routines) {
+      if (!routine.enabled || routine.nextRunAt === null || routine.nextRunAt > now) continue;
+      const scheduledFor = routine.nextRunAt;
+      this.recordRun(routine, { scheduledFor, manual: false, triggerSource: "schedule" });
+      if (routine.schedule.type === "once") {
+        routine.nextRunAt = null;
+        routine.enabled = false;
+        routine.updatedAt = Math.max(now, routine.updatedAt + 1);
+      } else {
+        routine.nextRunAt = scheduleNextOccurrence(routine.schedule, Math.max(now, scheduledFor));
+        if (routine.schedule.type === "interval" && routine.nextRunAt === null) {
+          routine.enabled = false;
+          routine.updatedAt = Math.max(now, routine.updatedAt + 1);
+        }
+      }
+    }
+    this.persist();
+  }
+}
 
 class MemoryStore implements RoutineRequestStore {
   readonly threads = new Map<string, RoutineRequestMessage[]>();
@@ -66,18 +224,14 @@ function harness(
   const clock = { now: start };
   const dir = mkdtempSync(join(tmpdir(), "omb-routine-request-"));
   tempDirs.push(dir);
-  const routines = new RoutineManager({
+  const routines = new TestRoutineManager({
     file: join(dir, "routines.json"),
     now: () => clock.now,
-    botState: (botId) => (botId === "missing" ? "missing" : "busy"),
-    goalState: () => "busy",
-    createTask: () => null,
-    startTurn: async () => {},
   });
   const store = new MemoryStore();
   const service = new RoutineRequestService({
     store,
-    // RoutineManager is synchronous but structurally satisfies RoutineOps;
+    // TestRoutineManager is synchronous but structurally satisfies RoutineOps;
     // nextOccurrence is a free function over schedules, attached here.
     routines: Object.assign(routines, { nextOccurrence: scheduleNextOccurrence }),
     now: () => clock.now,
@@ -1643,12 +1797,9 @@ describe("cross-bot routine targeting", () => {
     const clock = { now: Date.parse("2026-08-28T10:00:00Z") };
     const dir = mkdtempSync(join(tmpdir(), "omb-routine-target-"));
     tempDirs.push(dir);
-    const routines = new RoutineManager({
+    const routines = new TestRoutineManager({
       file: join(dir, "routines.json"),
       now: () => clock.now,
-      botState: () => "busy",
-      createTask: () => null,
-      startTurn: async () => {},
     });
     const store = new MemoryStore();
     const service = new RoutineRequestService({

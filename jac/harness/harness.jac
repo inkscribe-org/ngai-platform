@@ -314,3 +314,37 @@ glob routine_forget_receipts_for_thread: any = _routines_routine_forget_receipts
 glob routine_reconcile_receipts: any = _routines_routine_reconcile_receipts;
 glob routine_next_occurrence: any = _routines_routine_next_occurrence;
 glob routines_tick: any = _routines_routines_tick;
+
+# --- drivers module HTTP surface ---------------------------------------------
+# Same rebind rule as routines: `jac run` mounts only this entry module's
+# endpoints, so every drivers.jac def:pub is bound to a glob here.
+import from drivers {
+    driver_create as _drivers_driver_create,
+    driver_send_turn as _drivers_driver_send_turn,
+    driver_interrupt_turn as _drivers_driver_interrupt_turn,
+    driver_respond as _drivers_driver_respond,
+    driver_steer as _drivers_driver_steer,
+    driver_stop_all as _drivers_driver_stop_all,
+    driver_dispose as _drivers_driver_dispose,
+    driver_snapshot as _drivers_driver_snapshot,
+    driver_generate_text as _drivers_driver_generate_text,
+    driver_review_permission as _drivers_driver_review_permission,
+    driver_state as _drivers_driver_state,
+}
+glob driver_create: any = _drivers_driver_create;
+glob driver_send_turn: any = _drivers_driver_send_turn;
+glob driver_interrupt_turn: any = _drivers_driver_interrupt_turn;
+glob driver_respond: any = _drivers_driver_respond;
+glob driver_steer: any = _drivers_driver_steer;
+glob driver_stop_all: any = _drivers_driver_stop_all;
+glob driver_dispose: any = _drivers_driver_dispose;
+glob driver_snapshot: any = _drivers_driver_snapshot;
+glob driver_generate_text: any = _drivers_driver_generate_text;
+glob driver_review_permission: any = _drivers_driver_review_permission;
+glob driver_state: any = _drivers_driver_state;
+
+# Per-kind driver modules register into drivers._impls at import; the import
+# alone is the registration (side effects run when the harness boots).
+import from driver_claude {
+    _create as _claude_driver_create,
+}

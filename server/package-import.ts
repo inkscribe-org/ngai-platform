@@ -26,7 +26,7 @@ import {
   type AgentPart, type PartPair, type TeamPart,
 } from "./package-parts.ts";
 import type { PresetRegistry } from "./presets.ts";
-import type { Routine, RoutineInput, RoutineManager } from "./routines.ts";
+import type { Routine, RoutineInput, RoutinePackageStamp } from "./routines.ts";
 import type { SkillListing, SkillPackageStamp } from "./skills.ts";
 import type { BotRecord, GroupRecord, InstalledPackageMetadata, Store } from "./store.ts";
 import { importedMemberProfile, type ParsedTeamManifest, type TeamManifestMember } from "./team-manifest.ts";
@@ -69,7 +69,7 @@ export interface PackageImportDeps {
   routines: {
     create(input: RoutineInput, request?: unknown): Routine | Promise<Routine>;
     remove(id: string, request?: unknown): boolean | Promise<boolean>;
-    stampInstalledPackage?(id: string, stamp: Parameters<RoutineManager["stampInstalledPackage"]>[1]): boolean | Promise<boolean>;
+    stampInstalledPackage?(id: string, stamp: RoutinePackageStamp): boolean | Promise<boolean>;
   };
   skills: {
     install(botId: string, source: string, files: Array<{ path: string; content: string }>): SkillListing | { error: string };

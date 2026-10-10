@@ -48,7 +48,8 @@ import {
 } from "./package-import.ts";
 import { pair, partHash, sha256Hex, type PartPair, type TeamPart } from "./package-parts.ts";
 import { storedPresetObject, type StoredPreset } from "./presets.ts";
-import type { JacRoutines } from "./jac-routines.ts";
+import type { Routine } from "./routines.ts";
+import type { JacRoutines, RoutinePackageStampRow } from "./jac-routines.ts";
 import type { SkillListing, SkillPackageStamp } from "./skills.ts";
 import { sectionKey, type InstalledPackageMetadata, type Store, type StoreChange } from "./store.ts";
 import {
@@ -293,6 +294,14 @@ function noteRemovedParts(install: OrgInstall, next: Pick<LiveRecords, "bots" | 
 
 // ── the library ─────────────────────────────────────────────────────────
 
+/** The synchronous reads org-library needs. index.ts injects the Jac seam's
+ * mirrors (mirrorPackageStamps/mirrorListRoutines); tests inject an
+ * in-memory stub of the same shape. */
+interface RoutinesReader {
+  packageStamps(): RoutinePackageStampRow[];
+  listRoutines(): Routine[];
+}
+
 export interface OrgLibraryDeps {
   /** DATA_DIR; the library lives in DATA_DIR/org-library/. */
   dataDir: string;
@@ -301,7 +310,7 @@ export interface OrgLibraryDeps {
    * (server/jac-routines.ts) reads come from its synchronous mirror and
    * `update` may return a promise — switchOff's pause is fire-and-forget,
    * the caller logs failures. An in-memory stub (tests) still fits. */
-  routines: Pick<JacRoutines, "packageStamps" | "listRoutines"> & {
+  routines: RoutinesReader & {
     update(id: string, patch: Parameters<JacRoutines["update"]>[1], request?: Parameters<JacRoutines["update"]>[2]): unknown;
     /** Discard is fire-and-forget (discardPartial is synchronous): the
      *  facade's detached remove returns void. */
