@@ -4,14 +4,16 @@ Endpoints mirror server/message-db.ts's exported operations so the
 conformance corpus can drive identical call sequences against both
 harnesses and diff the resulting SQLite bytes.
 
-POST /function/<name> with a JSON body of kwargs. All guest-callable for
-now, matching the spike; auth lands with the session port.
+POST /function/<name> with a JSON body of kwargs. Guest-callable at the
+HTTP layer; every endpoint enforces the OMB_JAC_TOKEN shared secret
+(`omb_token`) when it is set.
 """
 
 import os;
 import json;
 
 import from db { db, db_file, DATA_DIR, close_db }
+import from common { guard, token_ok }
 import from messages {
     insert_message, append_message, update_message, import_thread,
     read_thread, read_thread_tail, set_active_leaf, delete_thread,
@@ -31,72 +33,98 @@ def _legacy_file(thread_id: str) -> str {
     return os.path.join(DATA_DIR, f"messages-{thread_id}.json");
 }
 
-def:pub health -> dict[str, any] {
+def:pub health(omb_token: any = None) -> dict[str, any] {
+    g = guard(omb_token);
+    if g is not None { return g; }
     return {"ok": True, "db": os.path.abspath(db_file()), "data_dir": DATA_DIR};
 }
 
 
-def:pub op_append_message(thread_id: str, message: dict[str, any]) -> dict[str, any] {
+def:pub op_append_message(thread_id: str, message: dict[str, any], omb_token: any = None) -> dict[str, any] {
+    g = guard(omb_token);
+    if g is not None { return g; }
     append_message(thread_id, message);
     return {"ok": True};
 }
 
 
-def:pub op_insert_message(thread_id: str, message: dict[str, any]) -> dict[str, any] {
+def:pub op_insert_message(thread_id: str, message: dict[str, any], omb_token: any = None) -> dict[str, any] {
+    g = guard(omb_token);
+    if g is not None { return g; }
     insert_message(thread_id, message);
     return {"ok": True};
 }
 
 
-def:pub op_update_message(thread_id: str, message: dict[str, any]) -> dict[str, any] {
+def:pub op_update_message(thread_id: str, message: dict[str, any], omb_token: any = None) -> dict[str, any] {
+    g = guard(omb_token);
+    if g is not None { return g; }
     update_message(thread_id, message);
     return {"ok": True};
 }
 
 
 def:pub op_import_thread(
-    thread_id: str, messages: list[any], active_leaf_id: (str | None) = None
+    thread_id: str, messages: list[any], active_leaf_id: (str | None) = None,
+    omb_token: any = None
 ) -> dict[str, any] {
+    g = guard(omb_token);
+    if g is not None { return g; }
     import_thread(thread_id, messages, active_leaf_id);
     return {"ok": True};
 }
 
 
-def:pub op_read_thread(thread_id: str) -> dict[str, any] {
+def:pub op_read_thread(thread_id: str, omb_token: any = None) -> dict[str, any] {
+    g = guard(omb_token);
+    if g is not None { return g; }
     return read_thread(thread_id, _legacy_file(thread_id));
 }
 
 
-def:pub op_read_thread_tail(thread_id: str, limit: int) -> dict[str, any] {
+def:pub op_read_thread_tail(thread_id: str, limit: int, omb_token: any = None) -> dict[str, any] {
+    g = guard(omb_token);
+    if g is not None { return g; }
     return read_thread_tail(thread_id, _legacy_file(thread_id), limit);
 }
 
 
-def:pub op_set_active_leaf(thread_id: str, leaf_id: (str | None) = None) -> dict[str, any] {
+def:pub op_set_active_leaf(thread_id: str, leaf_id: (str | None) = None, omb_token: any = None) -> dict[str, any] {
+    g = guard(omb_token);
+    if g is not None { return g; }
     set_active_leaf(thread_id, leaf_id);
     return {"ok": True};
 }
 
 
-def:pub op_delete_thread(thread_id: str) -> dict[str, any] {
+def:pub op_delete_thread(thread_id: str, omb_token: any = None) -> dict[str, any] {
+    g = guard(omb_token);
+    if g is not None { return g; }
     delete_thread(thread_id);
     return {"ok": True};
 }
 
 
-def:pub op_latest_message_ats(thread_ids: list[any]) -> dict[str, any] {
+def:pub op_latest_message_ats(thread_ids: list[any], omb_token: any = None) -> dict[str, any] {
+    g = guard(omb_token);
+    if g is not None { return g; }
     return {"ats": latest_message_ats(thread_ids)};
 }
 
 
-def:pub op_threads_referencing(fragment: str) -> dict[str, any] {
+def:pub op_threads_referencing(fragment: str, omb_token: any = None) -> dict[str, any] {
+    g = guard(omb_token);
+    if g is not None { return g; }
     return {"threads": threads_referencing(fragment)};
 }
 
 
 def:pub op_search_messages(
-    query: str, limit: int = 40, thread_id: (str | None) = None
+    query: str, limit: int = 40, thread_id: (str | None) = None,
+    omb_token: any = None
 ) -> dict[str, any] {
+    g = guard(omb_token);
+    if g is not None { return g; }
     return {"hits": search_messages(query, limit, thread_id)};
 }
 
@@ -106,102 +134,142 @@ def:pub op_recall_messages(
     thread_ids: list[any],
     limit: int = 12,
     range_: (dict[str, any] | None) = None,
-    mode: str = "all"
+    mode: str = "all",
+    omb_token: any = None
 ) -> dict[str, any] {
+    g = guard(omb_token);
+    if g is not None { return g; }
     return {"hits": recall_messages(query, thread_ids, limit, range_, mode)};
 }
 
 
 def:pub op_recent_messages(
-    thread_ids: list[any], range_: dict[str, any], limit: int = 12
+    thread_ids: list[any], range_: dict[str, any], limit: int = 12,
+    omb_token: any = None
 ) -> dict[str, any] {
+    g = guard(omb_token);
+    if g is not None { return g; }
     return {"hits": recent_messages(thread_ids, range_, limit)};
 }
 
 
 def:pub op_latest_said_by_bot(
-    thread_ids: list[any], bot_id: str, since: int, limit: int = 20
+    thread_ids: list[any], bot_id: str, since: int, limit: int = 20,
+    omb_token: any = None
 ) -> dict[str, any] {
+    g = guard(omb_token);
+    if g is not None { return g; }
     return {"latest": latest_said_by_bot(thread_ids, bot_id, since, limit)};
 }
 
 
-def:pub op_read_message_text(thread_id: str, message_id: str) -> dict[str, any] {
+def:pub op_read_message_text(thread_id: str, message_id: str, omb_token: any = None) -> dict[str, any] {
+    g = guard(omb_token);
+    if g is not None { return g; }
     return {"row": read_message_text(thread_id, message_id)};
 }
 
 
-def:pub op_working_goal_run_messages -> dict[str, any] {
+def:pub op_working_goal_run_messages(omb_token: any = None) -> dict[str, any] {
+    g = guard(omb_token);
+    if g is not None { return g; }
     return {"goals": working_goal_run_messages()};
 }
 
 
-def:pub op_read_command_receipt(kind: str, key: str) -> dict[str, any] {
+def:pub op_read_command_receipt(kind: str, key: str, omb_token: any = None) -> dict[str, any] {
+    g = guard(omb_token);
+    if g is not None { return g; }
     return {"receipt": read_command_receipt(kind, key)};
 }
 
 
-def:pub op_save_chat_followup(followup: dict[str, any]) -> dict[str, any] {
+def:pub op_save_chat_followup(followup: dict[str, any], omb_token: any = None) -> dict[str, any] {
+    g = guard(omb_token);
+    if g is not None { return g; }
     save_chat_followup(followup);
     return {"ok": True};
 }
 
 
-def:pub op_settle_chat_followups(ids: list[any], status: (str | None) = None) -> dict[str, any] {
+def:pub op_settle_chat_followups(ids: list[any], status: (str | None) = None, omb_token: any = None) -> dict[str, any] {
+    g = guard(omb_token);
+    if g is not None { return g; }
     settle_chat_followups(ids, status);
     return {"ok": True};
 }
 
 
-def:pub op_chat_followups(kind: (str | None) = None) -> dict[str, any] {
+def:pub op_chat_followups(kind: (str | None) = None, omb_token: any = None) -> dict[str, any] {
+    g = guard(omb_token);
+    if g is not None { return g; }
     return {"followups": chat_followups(kind)};
 }
 
 
 def:pub op_cancelled_chat_followup(
-    kind: str, owner_id: str, thread_id: str, send_id: str
+    kind: str, owner_id: str, thread_id: str, send_id: str,
+    omb_token: any = None
 ) -> dict[str, any] {
+    g = guard(omb_token);
+    if g is not None { return g; }
     return {"cancelled": cancelled_chat_followup(kind, owner_id, thread_id, send_id)};
 }
 
 
 def:pub op_index_memory_file(
-    bot_id: str, path: str, text: str, stat: dict[str, any]
+    bot_id: str, path: str, text: str, stat: dict[str, any],
+    omb_token: any = None
 ) -> dict[str, any] {
+    g = guard(omb_token);
+    if g is not None { return g; }
     index_memory_file(bot_id, path, text, stat);
     return {"ok": True};
 }
 
 
-def:pub op_remove_memory_file(bot_id: str, path: str) -> dict[str, any] {
+def:pub op_remove_memory_file(bot_id: str, path: str, omb_token: any = None) -> dict[str, any] {
+    g = guard(omb_token);
+    if g is not None { return g; }
     remove_memory_file(bot_id, path);
     return {"ok": True};
 }
 
 
-def:pub op_indexed_memory_files(bot_id: str) -> dict[str, any] {
+def:pub op_indexed_memory_files(bot_id: str, omb_token: any = None) -> dict[str, any] {
+    g = guard(omb_token);
+    if g is not None { return g; }
     return {"files": indexed_memory_files(bot_id)};
 }
 
 
 def:pub op_recall_memory(
-    query: str, bot_id: str, limit: int = 12, mode: str = "all"
+    query: str, bot_id: str, limit: int = 12, mode: str = "all",
+    omb_token: any = None
 ) -> dict[str, any] {
+    g = guard(omb_token);
+    if g is not None { return g; }
     return {"hits": recall_memory(query, bot_id, limit, mode)};
 }
 
 
-def:pub op_recall_terms(query: str) -> dict[str, any] {
+def:pub op_recall_terms(query: str, omb_token: any = None) -> dict[str, any] {
+    g = guard(omb_token);
+    if g is not None { return g; }
     return {"terms": recall_terms(query)};
 }
 
 
-def:pub op_recall_match_term(term: str) -> dict[str, any] {
+def:pub op_recall_match_term(term: str, omb_token: any = None) -> dict[str, any] {
+    g = guard(omb_token);
+    if g is not None { return g; }
     return {"term": recall_match_term(term)};
 }
 
 
-def:pub op_close_db -> dict[str, any] {
+def:pub op_close_db(omb_token: any = None) -> dict[str, any] {
+    g = guard(omb_token);
+    if g is not None { return g; }
     close_db();
     return {"ok": True};
 }
@@ -209,8 +277,13 @@ def:pub op_close_db -> dict[str, any] {
 
 walker:pub refresh_thread {
     has thread_id: str;
+    has omb_token: any = None;
 
     can go with Root entry {
+        if not token_ok(self.omb_token) {
+            report {"ok": False, "status": 403, "error": "unauthorized"};
+            return;
+        }
         t = hydrate_thread(self.thread_id, _legacy_file(self.thread_id));
         report {
             "thread_id": self.thread_id,
@@ -221,7 +294,9 @@ walker:pub refresh_thread {
 }
 
 
-def:pub echo_opt_probe(thread_id: (str | None) = None, range_: (dict[str, any] | None) = None, mode: str = "all") -> dict[str, any] {
+def:pub echo_opt_probe(thread_id: (str | None) = None, range_: (dict[str, any] | None) = None, mode: str = "all", omb_token: any = None) -> dict[str, any] {
+    g = guard(omb_token);
+    if g is not None { return g; }
     return {
         "thread_id": repr(thread_id),
         "range_": repr(range_),
