@@ -4,7 +4,9 @@ import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
 
 const workflow = parse(readFileSync(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8"));
-const requiredRuntimeJobs = ["vitest", "behavior-evals", "jac-conformance", "packaged-server", "windows-cua", "electron-smokes"];
+const requiredRuntimeJobs = ["jac-warm", "vitest", "behavior-evals", "jac-conformance", "packaged-server", "windows-cua", "electron-smokes"];
+// Jobs that boot the Jac harness wait for its one shared warm compile.
+const jacConsumers = ["vitest", "jac-conformance"];
 
 function runGate(needs: Record<string, unknown>) {
   // Execute the actual gate, not a duplicate of its success/failure logic.
@@ -148,7 +150,7 @@ describe("CI concurrency", () => {
         for (const step of rest) expect(step.if).toBe("steps.token.outputs.present == 'true'");
         continue;
       }
-      expect(job.needs).toBe("static");
+      expect(job.needs).toEqual(jacConsumers.includes(name) ? ["static", "jac-warm"] : "static");
       expect(job.if).toBe("needs.static.outputs.runtime == 'true'");
     }
   });

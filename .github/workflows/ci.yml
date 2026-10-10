@@ -76,7 +76,9 @@ jobs:
   vitest:
     # Admit the expensive runner fan-out only after the quick checks pass.
     # A failing preflight still fails the required gates; nothing is waived.
-    needs: static
+    # jac-warm: the Jac harness (routines, webhooks, drivers, …) serves the
+    # end-to-end suites; its compile runs once there, not once per shard.
+    needs: [static, jac-warm]
     if: needs.static.outputs.runtime == 'true'
     # vitest splits the file list deterministically across shards, so a
     # failure names the same shard on every run and one shard is reproducible
@@ -105,6 +107,23 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Install jac 0.37.21
+        if: runner.os == 'Linux'
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/jaseci-labs/jaseci/main/scripts/install.sh | bash -s -- --version 0.37.21
+          jac --version
+      - name: Pin harness file mtimes
+        if: runner.os == 'Linux'
+        # jac keys its compile cache on every jac/harness file's mtime+size;
+        # a fresh checkout's mtimes would miss a restored cache every time.
+        run: find jac/harness -exec touch -h -d '2000-01-01T00:00:00Z' {} +
+      - name: Restore the warm Jac harness compile
+        if: runner.os == 'Linux'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: jac/harness/.jac
+          key: ${{ needs.jac-warm.outputs.cache_key }}
+          fail-on-cache-miss: true
       - name: Prepare Electron test runtime
         # Electron lazily downloads its runtime on first import. Resolve it
         # before Vitest starts so a cold download cannot consume the fixture
@@ -166,8 +185,52 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
-  jac-conformance:
+  jac-warm:
     needs: static
+    if: needs.static.outputs.runtime == 'true'
+    # A cold `jac run` compiles every harness module (minutes, growing with
+    # each port — AGENTS.md §9); a warm one boots in ~2s. Compile once per
+    # harness source hash and hand the cache to every job that boots it.
+    name: jac harness warm compile
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    outputs:
+      cache_key: ${{ steps.key.outputs.key }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Pin harness file mtimes
+        # jac keys its compile cache on every jac/harness file's mtime+size;
+        # a fresh checkout's mtimes would miss a restored cache every time.
+        run: find jac/harness -exec touch -h -d '2000-01-01T00:00:00Z' {} +
+      - id: key
+        run: echo "key=jac-harness-${{ runner.os }}-0.37.21-${{ hashFiles('jac/harness/**/*.jac', 'jac/harness/jac.toml') }}" >> "$GITHUB_OUTPUT"
+      - id: cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: jac/harness/.jac
+          key: ${{ steps.key.outputs.key }}
+          # A partial hit still reuses every unchanged module's compile.
+          restore-keys: jac-harness-${{ runner.os }}-0.37.21-
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        if: steps.cache.outputs.cache-hit != 'true'
+        with:
+          node-version: 24
+      - name: Install jac 0.37.21
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/jaseci-labs/jaseci/main/scripts/install.sh | bash -s -- --version 0.37.21
+          jac --version
+      - name: Compile the harness
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: scripts/jac-warm.sh 3000
+      - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: steps.cache.outputs.cache-hit != 'true'
+        with:
+          path: jac/harness/.jac
+          key: ${{ steps.key.outputs.key }}
+
+  jac-conformance:
+    needs: [static, jac-warm]
     if: needs.static.outputs.runtime == 'true'
     # The Jac harness is the runtime for the migrated subsystems (message
     # db first, routines in phase 2): this job runs its unit tests and the
@@ -188,6 +251,16 @@ jobs:
         run: |
           curl -fsSL https://raw.githubusercontent.com/jaseci-labs/jaseci/main/scripts/install.sh | bash -s -- --version 0.37.21
           jac --version
+      - name: Pin harness file mtimes
+        # jac keys its compile cache on every jac/harness file's mtime+size;
+        # a fresh checkout's mtimes would miss a restored cache every time.
+        run: find jac/harness -exec touch -h -d '2000-01-01T00:00:00Z' {} +
+      - name: Restore the warm Jac harness compile
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: jac/harness/.jac
+          key: ${{ needs.jac-warm.outputs.cache_key }}
+          fail-on-cache-miss: true
       - name: Jac unit tests
         working-directory: jac/harness
         run: jac test
@@ -278,7 +351,7 @@ jobs:
   gate:
     # One aggregation, not three queued runners doing the same check.
     name: CI
-    needs: [static, vitest, behavior-evals, jac-conformance, packaged-server, windows-cua, electron-smokes]
+    needs: [static, jac-warm, vitest, behavior-evals, jac-conformance, packaged-server, windows-cua, electron-smokes]
     # Still report failed/skipped dependencies, but don't keep a superseded
     # workflow alive just to schedule its summary jobs.
     if: ${{ !cancelled() }}

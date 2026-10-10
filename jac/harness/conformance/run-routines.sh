@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
-# Routines conformance run: replay routines-ops.json through the REAL
-# server/routines.ts RoutineManager and the Jac harness, then diff op
-# results, emit frames, bridge-call sequences and the routines.json bytes.
+# Routines conformance run: replay routines-ops.json through the Jac
+# harness and diff op results, emit frames, bridge-call sequences and the
+# routines.json bytes against the node golden in golden/ — recorded from the
+# REAL server/routines.ts RoutineManager before phase 2 deleted it (b99ecc9,
+# via the then-current apply-routines-node.ts; see golden/README). Changing
+# routines-ops.json means re-recording the golden from that commit.
 #
 # Both sides run under TZ=America/New_York so local-wall-time semantics are
 # deterministic. The Jac harness gets OMB_ROUTINES_TEST_CLOCK=1 (set_now /
@@ -33,9 +36,9 @@ if [ -z "$JAC_URL" ]; then
 fi
 STUB_PORT=$(node -e 'const s=require("net").createServer();s.listen(0,"127.0.0.1",()=>{console.log(s.address().port);s.close()})')
 
-echo "== node side =="
-OMB_DATA_DIR="$NODE_DIR" TZ=America/New_York \
-  node --experimental-strip-types apply-routines-node.ts routines-ops.json "$WORK/node-log.json"
+echo "== node side (recorded golden) =="
+gunzip -c golden/routines-node-log.json.gz > "$WORK/node-log.json"
+cp golden/routines-node.routines.json "$NODE_DIR/routines.json"
 
 echo "== jac side =="
 if [ -z "$JAC_URL" ]; then
