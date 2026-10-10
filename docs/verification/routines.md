@@ -212,9 +212,9 @@ pnpm exec vitest run server/index.test.ts -t "independent webhook"
 
 The webhook and routines annexes pin delivery dedup across a reload of
 `webhooks.json`/`routines.json` (a restart of the harness) and the seven-day
-receipt window; the `index.test.ts` case drives a real delivery, retry and
+receipt window; the `server/index.test.ts` case drives a real delivery, retry and
 secret rotation through node's ingress and the Jac harness. The former
-`webhook-restart.e2e.test.ts` (an owned worker killed between the execution
+webhook restart end-to-end test (an owned worker killed between the execution
 and ingress commits) was deleted with the in-process RoutineManager in phase 2
 and has no Jac-side equivalent yet.
 
