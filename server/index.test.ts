@@ -48,6 +48,8 @@ const JAC_BIN = OPERATOR_JAC.OMB_JAC_BIN;
 const JAC_ENV = {
   ...(JAC_BIN ? { OMB_JAC_BIN: JAC_BIN } : {}),
   XDG_CACHE_HOME: OPERATOR_JAC.XDG_CACHE_HOME,
+  // Run the suite through the Jac drivers: OMB_JAC_DRIVERS=all pnpm vitest …
+  ...(process.env.OMB_JAC_DRIVERS ? { OMB_JAC_DRIVERS: process.env.OMB_JAC_DRIVERS } : {}),
 };
 const FAKE_CLAUDE_CLI = join(SERVER_DIR, "testing", "fake-claude-cli.ts");
 const FAKE_MCP_SERVER = join(SERVER_DIR, "testing", "fake-mcp-server.ts");
