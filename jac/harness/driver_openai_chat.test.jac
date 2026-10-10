@@ -908,15 +908,27 @@ test "mcp: cancels initialize, tools/list and tools/call and awaits its owned pr
             }
         }
         box = _async(run_it);
+        # Capture the pids when the helper first appears: the fixture rewrites
+        # its receipt on every later message (the cancel notification
+        # included), without the helper field.
+        seen: dict[str, any] = {};
         def helper_up -> bool {
-            try { return mcp_read(f).get("helper", 0) > 0; } except Exception { return False; }
+            try {
+                r = mcp_read(f);
+            } except Exception {
+                return False;
+            }
+            if r.get("helper", 0) > 0 {
+                seen.update({"pid": r["pid"], "helper": r["helper"]});
+                return True;
+            }
+            return False;
         }
         _until(helper_up);
         f["signal"].abort();
         outcome = _value(box);
         assert re.search("cancelled|closed", outcome) is not None, outcome;
-        receipt = mcp_read(f);
-        assert not _alive(receipt["pid"]) and not _alive(receipt["helper"]), method;
+        assert not _alive(seen["pid"]) and not _alive(seen["helper"]), method;
         _cleanup();
     }
 }
