@@ -107,23 +107,11 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Install jac 0.37.21
+      - name: Jac harness (warm)
         if: runner.os == 'Linux'
-        run: |
-          curl -fsSL https://raw.githubusercontent.com/jaseci-labs/jaseci/main/scripts/install.sh | bash -s -- --version 0.37.21
-          jac --version
-      - name: Pin harness file mtimes
-        if: runner.os == 'Linux'
-        # jac keys its compile cache on every jac/harness file's mtime+size;
-        # a fresh checkout's mtimes would miss a restored cache every time.
-        run: find jac/harness -exec touch -h -d '2000-01-01T00:00:00Z' {} +
-      - name: Restore the warm Jac harness compile
-        if: runner.os == 'Linux'
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        uses: ./.github/actions/jac-harness
         with:
-          path: jac/harness/.jac
-          key: ${{ needs.jac-warm.outputs.cache_key }}
-          fail-on-cache-miss: true
+          cache-key: ${{ needs.jac-warm.outputs.cache_key }}
       - name: Prepare Electron test runtime
         # Electron lazily downloads its runtime on first import. Resolve it
         # before Vitest starts so a cold download cannot consume the fixture
@@ -159,20 +147,10 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Install jac 0.37.21
-        run: |
-          curl -fsSL https://raw.githubusercontent.com/jaseci-labs/jaseci/main/scripts/install.sh | bash -s -- --version 0.37.21
-          jac --version
-      - name: Pin harness file mtimes
-        # jac keys its compile cache on every jac/harness file's mtime+size;
-        # a fresh checkout's mtimes would miss a restored cache every time.
-        run: find jac/harness -exec touch -h -d '2000-01-01T00:00:00Z' {} +
-      - name: Restore the warm Jac harness compile
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - name: Jac harness (warm)
+        uses: ./.github/actions/jac-harness
         with:
-          path: jac/harness/.jac
-          key: ${{ needs.jac-warm.outputs.cache_key }}
-          fail-on-cache-miss: true
+          cache-key: ${{ needs.jac-warm.outputs.cache_key }}
       - name: Eval suite typecheck (standalone tsconfig)
         # The root typecheck builds src and server only; evals carries its
         # own tsconfig, so its type gate runs here with the rest of the
@@ -262,20 +240,10 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Install jac 0.37.21
-        run: |
-          curl -fsSL https://raw.githubusercontent.com/jaseci-labs/jaseci/main/scripts/install.sh | bash -s -- --version 0.37.21
-          jac --version
-      - name: Pin harness file mtimes
-        # jac keys its compile cache on every jac/harness file's mtime+size;
-        # a fresh checkout's mtimes would miss a restored cache every time.
-        run: find jac/harness -exec touch -h -d '2000-01-01T00:00:00Z' {} +
-      - name: Restore the warm Jac harness compile
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - name: Jac harness (warm)
+        uses: ./.github/actions/jac-harness
         with:
-          path: jac/harness/.jac
-          key: ${{ needs.jac-warm.outputs.cache_key }}
-          fail-on-cache-miss: true
+          cache-key: ${{ needs.jac-warm.outputs.cache_key }}
       - name: Jac unit tests
         working-directory: jac/harness
         run: jac test
@@ -513,7 +481,7 @@ jobs:
           command: deploy --config cloudflare/composio-broker/wrangler.jsonc
 
   ui-smoke:
-    needs: static
+    needs: [static, jac-warm]
     if: needs.static.outputs.runtime == 'true'
     # Advisory, outside the required `test` matrix: the renderer recipe in
     # docs/verification/chat-ui.md run by a machine. It downloads the pinned
@@ -532,6 +500,10 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Jac harness (warm)
+        uses: ./.github/actions/jac-harness
+        with:
+          cache-key: ${{ needs.jac-warm.outputs.cache_key }}
       - name: Let Chrome build its sandbox on this runner
         # Ubuntu 24.04's AppArmor profile blocks unprivileged user namespaces,
         # so the downloaded Chrome for Testing dies with "No usable sandbox".

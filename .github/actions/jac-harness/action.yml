@@ -1,0 +1,27 @@
+name: Jac harness (warm)
+description: >-
+  Install the pinned jac and restore the harness compile the jac-warm job
+  produced, so `jac run` in jac/harness boots in seconds (AGENTS.md §9).
+inputs:
+  cache-key:
+    description: needs.jac-warm.outputs.cache_key
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Install jac 0.37.21
+      shell: bash
+      run: |
+        curl -fsSL https://raw.githubusercontent.com/jaseci-labs/jaseci/main/scripts/install.sh | bash -s -- --version 0.37.21
+        jac --version
+    - name: Pin harness file mtimes
+      # jac keys its compile cache on every jac/harness file's mtime+size;
+      # a fresh checkout's mtimes would miss a restored cache every time.
+      shell: bash
+      run: find jac/harness -exec touch -h -d '2000-01-01T00:00:00Z' {} +
+    - name: Restore the warm Jac harness compile
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: jac/harness/.jac
+        key: ${{ inputs.cache-key }}
+        fail-on-cache-miss: true
