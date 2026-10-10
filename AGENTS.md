@@ -191,5 +191,7 @@ reference port. For each subsystem:
 - **Delete** the TS manager and its unit tests; keep shared wire types in
   `shared/`. `index.test.ts` end-to-end tests exercise the real harness
   (its `beforeAll` waits for `/api/routines` to answer 200).
+- `jac test` waits 60s then fails on Postgres unless run with
+  `TMPDIR=~/.cache/jac/tmp` (the shared daemon's socket dir).
 - Validate: `jac check` + `jac test` on the pin (0.37.21), `tsc -p
   tsconfig.server.json`, affected vitest files, one live `jac run` smoke.
