@@ -3507,19 +3507,32 @@ def routines_scheduled_tick -> None{
     tick();
 }
 
+# The @schedule thread and op threads (run_now/resume/tick) both call tick;
+# the gate makes the ticking check-and-set atomic so two passes can never
+# dispatch the same queued run. `ticking` is raised before `paused` is read
+# so workspace_backup's quiesce (set paused, then wait out ticking) cannot
+# slip between a tick's paused check and its start.
+glob _tick_gate: any = threading.Lock();
+
 def tick -> None{
-    if _state["ticking"] {
+    if not _tick_gate.acquire(False) {
         return;
     }
-    _ensure_booted();
-    if _state["paused"] {
-        return;
-    }
-    _state["ticking"] = True;
     try {
-        _tick_body();
+        if _state["ticking"] {
+            return;
+        }
+        _ensure_booted();
+        _state["ticking"] = True;
+        try {
+            if not _state["paused"] {
+                _tick_body();
+            }
+        } finally {
+            _state["ticking"] = False;
+        }
     } finally {
-        _state["ticking"] = False;
+        _tick_gate.release();
     }
 }
 
@@ -4123,8 +4136,9 @@ def:pub routine_next_occurrence(schedule: dict[str, any], after: (int | None) = 
                                 count: (int | None) = None,
                                 omb_token: (str | None) = None) -> dict[str, any] {
     def _calc -> dict[str, any] {
-        at = after if after is not None else _now();
-        n = count if count is not None else 1;
+        # Fused binary: an omitted int|None kwarg arrives as the string "None".
+        at = after if isinstance(after, int) and not isinstance(after, bool) else _now();
+        n = count if isinstance(count, int) and not isinstance(count, bool) else 1;
         if isinstance(schedule, dict) and schedule.get("type") == "cron" {
             return {"runs": _next_cron_runs(schedule, at, n)};
         }

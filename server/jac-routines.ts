@@ -600,7 +600,7 @@ export const jacRoutines = {
     (await jacOp<StampsResult>("routine_package_stamps")).stamps ?? [],
 
   stampInstalledPackage: async (id: string, stamp: RoutinePackageStamp): Promise<boolean> =>
-    (await jacOp<{ ok?: boolean }>("routine_stamp_installed_package", { id, stamp })).ok !== false,
+    (await jacOp<{ stamped?: boolean }>("routine_stamp_installed_package", { id, stamp })).stamped === true,
 
   wakeHold: (horizonMs?: number): Promise<RoutineWakeHold> =>
     jacOp<RoutineWakeHold>("routine_wake_hold", horizonMs === undefined ? {} : { horizon_ms: horizonMs }),
