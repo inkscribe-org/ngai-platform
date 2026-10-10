@@ -75,7 +75,10 @@ flowchart LR
   J -->|spawn + parse| CLI[claude / codex / grok … CLIs]
 ```
 
-**Seam rules** (what makes two harness processes safe):
+**Seam rules** (what makes two harness processes safe). *Superseded
+2026-10-10 for rules 2–3: the graph store on Postgres is the source of truth
+(no shared SQLite schema), and node fronts Jac through one prefix table
+(impl plan C0), not Caddy/a split router. Rules 1 and 4 still hold.*
 
 1. **Subsystems move whole**: routes + their SSE event topics + their tables
    move together. Never two writers to one table; never one topic owned by
@@ -253,7 +256,7 @@ core turn pipeline on the runtime.
    loopback (sv walkers/functions in-process, colocated service apps under
    `/api/<app>`), and renders the `cl` UI in the OS webview (WebKitGTK /
    WKWebView / WebView2) or bundled Chromium (`[desktop] engine = "cef"`).
-   `jac build --platform {windows,macos,linux,all}`. Dev: `jac run --dev
+   `jac build --platform {windows,macos,linux,all}`. (Windows and Intel macOS only via our upstream PRs — impl plan WS-U1; the toolchain refuses them today.) Dev: `jac run --dev
    <app>` (HMR, native engine). Docs:
    `third_party/jac/jac/jaclang/cli/docs/build/desktop-mobile.md`,
    `.../reference/plugins/jac-desktop.md`. Consequences: no separate harness

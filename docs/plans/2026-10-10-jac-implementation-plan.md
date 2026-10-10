@@ -2,7 +2,7 @@
 
 Companion to `2026-10-07-jac-migration.md` (the "why" and the decision log).
 This document is the "how, in what order, and when is it done". It is
-written so that each workstream (§6–§13) can be handed to one engineer or
+written so that each workstream (§6–§13b) can be handed to one engineer or
 one agent as a self-contained brief: scope, target design, dependencies,
 acceptance, and which tests port or die.
 
@@ -17,7 +17,7 @@ marked ~.
 
 ## 0. How to use this plan
 
-- **Work in order of the phases (§4).** A workstream may start when every
+- **Work in order of the phases (§5).** A workstream may start when every
   item in its *Depends on* line is done or explicitly waived.
 - **Port to the end-state shape, never to the seam.** Since 2026-10-10 the
   shipped app is one Jac desktop binary (§2). The node↔Jac bridge
@@ -71,7 +71,7 @@ supervised by node; node answers every client request.
 | `src/` React client | 791 files, ~124k impl LOC, 353 test files | single 4,112-LOC store, no router, one SSE feed |
 | `electron/` | 73 impl files, 18,816 LOC (+15.9k vendored updater) | ~94 IPC handlers; `window.ogb` used from 76 client files |
 | `companion/` | ~4,000 LOC (+5.4k tests) | phone relay sidecar |
-| `enterprise/` | 960 LOC | licence + hosted sign-in; imports core auth |
+| `enterprise/` | 346 impl LOC (788 with tests) | licence + hosted sign-in; imports core auth |
 | `shared/` | 61 files, 6,205 LOC | wire contracts |
 | server tests | 473 files, 144,540 LOC (101 e2e) | most die with their subsystem |
 
@@ -161,7 +161,12 @@ graph-modelled in computer_control.jac), `McpServer`, `Connection`,
 Edges: `Member` (bot↔room), `Owns` (bot→thread/task), `Next`
 (message order), `Contains`, `AttachedTo` (bot↔computer), `Grants`
 (connection↔bot, server↔bot), `Delegates` (thread→thread), `Schedules`
-(routine→bot/room), `Answers` (card→message).
+(routine→bot/room), `Answers` (card→message), `Has` (bot→skill,
+bot→memory entry), `Reports` (incident→Chief bot).
+
+Also: `Incident` node (C4), `Principal`/`Device`/`Session` nodes (C1,
+A2(h)), `Config` node (C6). Every persisted archetype carries an explicit
+`@archetype_alias` from day one (A2(i)).
 
 Walkers: `StartTurn` (unifies today's `startTurn` + `runGroupMemberTurn`,
 §3.1 surprise #2), `FoldEvent` (the runtime-event fold), `ScheduleTick`,
@@ -220,39 +225,42 @@ stdio proxies.
 
 ### 4.1 `server/index.ts` sections (line ranges at commit 361a7a5)
 
-| Lines | Section | LOC | Target workstream |
-|---|---|---|---|
-| 649–870 | config/bootstrap, data-dir lease, restore, sessions, `cfg`, registry | 220 | C6, C1 |
-| 872–1452 | identity + Cloud-home ownership/lending | 580 | G (deferred), C1 |
-| 1453–1667 | bot visibility | 215 | C1 |
-| 1668–1912 | admin audit, usage booking | 245 | C13 |
-| 1913–2182 | provider auth, MCP OAuth, Electron parentPort channel, bus | 270 | C6, F1, C3 |
-| 2183–2560 | internal capability tokens (per turn-generation bearers) | 380 | C12 |
-| 2561–3069 | direct-turn dispatch claims, turn resources | 510 | C3 |
-| 3070–3204 | browser runtime, per-turn integrations | 135 | C10, C3 |
-| 3205–3340 | computer control glue | 135 | C11 |
-| 3341–3773 | model selection, engines, packages | 430 | C6, C9 |
-| 3774–3851 | store construction and boot | 80 | C2 |
-| 3852–4592 | wire projections, approval modes, `handleDesktopTrustedApprovalMessage` (~400) | 740 | C2, C5, F1 |
-| 4593–5468 | rooms/groups state | 875 | C3 |
-| 5469–5857 | store→SSE bridge, message pages, SSE fan-out (`broadcast` 5808; 55 call sites) | 385 | C3 (event feed) |
-| 5858–6112 | fold helpers, card answers | 255 | C3, C5 |
-| 6113–6655 | watchdog, bus subscribers, engine hooks, digests | 545 | C3 |
-| 6656–7537 | computers (≈40 % Boat/VPS) | 880 | C11, G |
-| 7538–8279 | **the fold** (`handleRuntimeEvent`, awaits a Jac op per event) | 740 | C3 |
-| 8280–8964 | delegation and handoffs | 685 | C4 |
-| 8965–9400 | steer-queue drain, direct sends (`acceptDirectSend`) | 435 | C3 |
-| 9401–9583 | live screen poller, titles | 180 | C11, C3 |
-| 9584–11087 | **`startTurn`** (~1,500) | 1,500 | C3 |
-| 11088–11656 | routine helpers + **Jac→node bridge ops** | 570 | C3 / deleted in H |
-| 11657–12487 | boot recovery, card-proposal services, `deleteBotWithLifecycle` | 830 | C5, C2 |
-| 12488–12509 | webhooks (ingress listener) | 22 | C14 |
-| 12510–14414 | **group turn engine** (`runGroupMemberTurn` ~1,055, `startGroupTurn`) | 1,905 | C3 |
-| 14415–15408 | calendar calls, cards and resumes | 995 | C5, G (calls) |
-| 15409–15943 | settings surface (`configStatus`) | 535 | C6 |
-| 15944–16199 | HTTP plumbing, static serving | 255 | C0 |
-| 16200–25635 | **`handleRequest`** (9,435): public 11 · sessions 15 · internal 50 · public API ~202 | 9,435 | per route group, §4.2 |
-| 25637–25923 | boot order, timers, shutdown | 287 | C0 |
+The **§ letters** are the section ids the C workstreams cite ("index.ts
+section Y"); section A is lines 1–648 (imports).
+
+| § | Lines | Section | LOC | Target workstream |
+|---|---|---|---|---|
+| B | 649–870 | config/bootstrap, data-dir lease, restore, sessions, `cfg`, registry | 220 | C6, C1 |
+| C | 872–1452 | identity + Cloud-home ownership/lending | 580 | G (deferred), C1 |
+| D | 1453–1667 | bot visibility | 215 | C1 |
+| E | 1668–1912 | admin audit, usage booking | 245 | C13 |
+| F | 1913–2182 | provider auth, MCP OAuth, Electron parentPort channel, bus | 270 | C6, F1, C3 |
+| G | 2183–2560 | internal capability tokens (per turn-generation bearers) | 380 | C12 |
+| H | 2561–3069 | direct-turn dispatch claims, turn resources | 510 | C3 |
+| I | 3070–3204 | browser runtime, per-turn integrations | 135 | C10, C3 |
+| J | 3205–3340 | computer control glue | 135 | C11 |
+| K | 3341–3773 | model selection, engines, packages | 430 | C6, C9 |
+| L | 3774–3851 | store construction and boot | 80 | C2 |
+| M | 3852–4592 | wire projections, approval modes, `handleDesktopTrustedApprovalMessage` (~400) | 740 | C2, C5, F1 |
+| N | 4593–5468 | rooms/groups state | 875 | C3 |
+| O, P | 5469–5857 | store→SSE bridge, message pages, SSE fan-out (`broadcast` 5808; 55 call sites) | 385 | C3 (event feed) |
+| Q | 5858–6112 | fold helpers, card answers | 255 | C3, C5 |
+| R, S | 6113–6655 | watchdog, bus subscribers, engine hooks, digests | 545 | C3 |
+| T | 6656–7537 | computers (≈40 % Boat/VPS) | 880 | C11, G |
+| U | 7538–8279 | **the fold** (`handleRuntimeEvent`, awaits a Jac op per event) | 740 | C3 |
+| V | 8280–8964 | delegation and handoffs | 685 | C4 |
+| W | 8965–9400 | steer-queue drain, direct sends (`acceptDirectSend`) | 435 | C3 |
+| X | 9401–9583 | live screen poller, titles | 180 | C11, C3 |
+| Y | 9584–11087 | **`startTurn`** (~1,500) | 1,500 | C3 |
+| Z, AA | 11088–11656 | routine helpers + **Jac→node bridge ops** | 570 | C3 / deleted in H |
+| AB, AC | 11657–12487 | boot recovery, card-proposal services, `deleteBotWithLifecycle` | 830 | C5, C2 |
+| AD | 12488–12509 | webhooks (ingress listener) | 22 | C14 |
+| AE | 12510–14414 | **group turn engine** (`runGroupMemberTurn` ~1,055, `startGroupTurn`) | 1,905 | C3 |
+| AF, AG | 14415–15408 | calendar calls, cards and resumes | 995 | C5, G (calls) |
+| AH | 15409–15943 | settings surface (`configStatus`) | 535 | C6 |
+| AI | 15944–16199 | HTTP plumbing, static serving | 255 | C0 |
+| AJ | 16200–25635 | **`handleRequest`** (9,435): public 11 · sessions 15 · internal 50 · public API ~202 | 9,435 | per route group, §4.2 |
+| AK | 25637–25923 | boot order, timers, shutdown | 287 | C0 |
 
 ### 4.2 Route groups → workstream
 
@@ -303,26 +311,34 @@ stdio proxies.
 
 ```
 Phase A  Spikes & decisions (gate everything)        A1 A2 A3 A4 A5 A6
+Phase U  Upstream PRs we author: U2 in Phase A; U1 after F2 (U1.3 early)
             │
-Phase B  Stabilize the branch (CI green on what exists)  B1..B6   (parallel with A)
+Phase B  Stabilize the branch (CI green on what exists)  B1..B8   (parallel with A)
             │
-Phase C  Server core into Jac sv (index.ts decomposed)   C0..C14
+Phase C  Server core into Jac sv (index.ts decomposed)   C0..C15 (C2 = model+C2a+C2b, cutover with C3)
             │            ╲
 Phase D  Drivers + stdio helpers in Jac                  D1..D4  (D1 needs C3; D3 needs A3)
             │
 Phase E  Client into Jac cl                              E0..E9  (needs C-feeds: C3 event feed, A4)
             │
-Phase F  Desktop shell, companion, enterprise, release   F1..F6  (needs A1, upstream §14)
+Phase F  Desktop shell, companion, enterprise, release   F1..F7  (needs A1, upstream §14)
+Phase X  Cross-cutting (observability, a11y, telemetry, docs) X1..X4 (alongside C–F)
             │
 Phase G  Hosted tier: re-scope or port                   G1..G3  (decision-gated)
             │
 Phase H  Decommission node/Electron/seams; CI rewrite    H1..H4
 ```
 
-Critical path: **A1 → C0 → C2 → C3 → E0/E1 → F2 → F4 → H**. Upstream items
-(§14) gate F (tray, updater, deep links, single-instance, signing,
-Windows) and A2 (Postgres). Everything in C except C0/C2/C3 can run in
-parallel once C0 lands.
+Critical path: **§17 pin decision → A1 → A2 spike (+U2) → C0 → C1 →
+C2-model → G1 → C3 (with C2-cutover) → C12 + A3/D3 → E0/E1 → E2…E9 → F2 →
+F4 → H.** A shipped node-less app needs C12 and D3; C3 transitively needs
+C1, C2-model and the registry part of C6. Upstream items (§14) gate F
+(tray, updater, deep links, single-instance, signing, Windows) and A2/F2
+(Postgres: #9944, #9959).
+
+Parallelism: C6, C7 (model parts), C15 and the C2a importer can run beside
+C3 once C2-model lands; C4, C5, C8, C10–C14 need C3. E areas run in
+parallel after E0/E1. D2 kinds run in parallel after the ACP core.
 
 ## 6. Phase A — spikes and decisions (gate the rest)
 
@@ -347,9 +363,20 @@ on a disposable machine/VM, not on the shared dev box.
   calls them; a module global survives across requests; a scheduled
   `@schedule` function fires.
 - **Also record:** binary size, first-launch time (jab materialization +
-  Postgres fetch), warm launch time, where data lands
+  Postgres start), warm launch time, where data lands
   (`JAC_DATA_PATH`/app_data — upstream #9947), localStorage persistence
   across launches (token), behaviour with no network on first run.
+- **REST surface:** can JacAPIServer serve custom method + path routes
+  (GET/DELETE, path params, multipart upload, CSV and streaming downloads)
+  or only `POST /function/<name>` and `/walker/<name>`? External clients
+  depend on today's REST shapes (companion, `scripts/mcp-server.ts`, the
+  CLI, Cloudflare Workers). If not supported, file upstream and decide the
+  compat layer for C0.
+- **Performance budgets** (recorded here, enforced in F2 acceptance): cold
+  first launch, warm launch, trivial op p50/p95, first-token latency of a
+  scripted turn, idle RSS.
+- **Depends on:** §17 decision 5 (pin) — A1 binaries and every later
+  number depend on the toolchain version.
 - **Decision:** the workspace layout (§2.1) and the build invocation used
   by every later workstream. **Done when:** the hello-world release binary
   runs on Linux x86_64 and macOS arm64 from CI artifacts, and dev ≡ build
@@ -375,9 +402,42 @@ on a disposable machine/VM, not on the shared dev box.
   search; (e) how long-lived turn state (subprocess handles, open
   streams) lives *outside* the graph (module state keyed by node id) and
   reconciles on restart; (f) whether `messages.db` full-text search moves
-  to Postgres FTS or stays a derived sqlite index.
-- **Done when:** spike write-up with numbers for (a)–(f); the node/edge
-  schema for C2 drafted (§2.2 model, persisted).
+  to Postgres FTS or stays a derived sqlite index;
+  (g) **writes outside a request** — driver reader threads, `@schedule`
+  ticks and subprocess callbacks have no HTTP request around them: define
+  the commit API they use (`runtime.commit` / `on_commit`), coalescing
+  (commit per message, never per delta), and what a conflict replay does to
+  side effects;
+  (h) **roots and principals** — the owner, members, paired phones,
+  companion requests, the CLI and guests: one workspace root with access
+  control in our code (C1 visibility rules), or per-user roots (Jac's
+  default, which partitions data). Recommendation: one workspace root,
+  every walker bound to it explicitly; disable Jac's `__guest__` fallback
+  for our endpoints;
+  (i) **schema evolution** — persistent type identity follows the module
+  path (`serializer.impl.jac:679` refuses path-derived `_jac_app_*` keys;
+  `@archetype_alias` and `__jac_schema__` drift rules in
+  `jaclang/cli/docs/reference/persistence.md`). Moving code from
+  `jac/harness/` to `app/core/model/` changes identities, so: explicit
+  aliases on every persisted archetype from day one, a schema-version
+  policy, a migration fixture per release, back up the database before
+  migrating, refuse to run an older app on a newer schema;
+  (j) **what stays on disk** — engines read bot folders, CLAUDE.md, memory
+  markdown, skills dirs and attachments from the filesystem; those stay
+  canonical on disk and the graph holds their metadata only (C2a must not
+  import their contents);
+  (k) **bundled Postgres lifecycle** — major-version upgrades of the
+  shipped distribution (`pg_upgrade` or dump/restore across app updates),
+  vacuum and disk growth, cluster backup; whether `JAC_PG_DIST` can be set
+  before the store boots or needs host support (#9944).
+- **Thresholds (pass/fail):** append p95 < 25 ms at 60 events/s sustained
+  for 10 min with < 1 % conflict replays; thread page (50 messages) p95 <
+  100 ms at 100k messages; offline first run succeeds with networking
+  disabled; cold first launch including Postgres init < 20 s on CI
+  runners. Adjust only with a recorded reason.
+- **Done when:** spike write-up with numbers for (a)–(k) against the
+  thresholds; the persisted node/edge schema for C2 drafted with aliases
+  (§2.2); decisions for (g), (h), (j) recorded in §17.
 
 ### A3. Child processes from the desktop binary
 - **Question:** engines spawn helper processes by *command line* (MCP
@@ -392,8 +452,13 @@ on a disposable machine/VM, not on the shared dev box.
 - **Also:** child-process lifetime when the window closes (host calls
   `Py_Finalize`; nothing reaps children — research §5), SIGCHLD/killpg
   behaviour on a non-main-thread loop, process-group spawn on macOS.
+- **Node for engines:** several engines are themselves node CLIs and
+  `engine-install.ts` installs them with `npm install -g` (needs npm on
+  PATH); today some helpers lean on Electron's node. Decide the end state:
+  require the user's node, offer a managed node download, or bundle node.
 - **Done when:** one proxy (the permission proxy) runs from a release
-  binary without node, round-trips a permission ask, and dies with the app.
+  binary without our node, round-trips a permission ask, and dies with the
+  app; the node-for-engines decision is recorded in §17.
 
 ### A4. Event feed prototype
 - `async def:pub events(since: str)` returning an async generator fed by an
@@ -476,6 +541,21 @@ on a disposable machine/VM, not on the shared dev box.
 - The 3 routine `index.test.ts` failures that predate the webhooks port;
   root-cause each now that the test harness boots Jac.
 
+### B7. Retarget evals and verification at the Jac app
+- `evals/runners` boot the node server; golden replay (C3/D1 acceptance),
+  behavior evals, skill-bench, `scripts/control-omb.ts` and
+  `scripts/verify-*.ts` must target the Jac app in headless mode (F6)
+  before C3 can use them as a gate. Until F6 exists they target node with
+  `OMB_JAC_DRIVERS=all`.
+- **Depends on:** F6 headless entry (can be pulled forward as a dev-only
+  `jac run` of the workspace).
+
+### B8. Windows CI for sv code
+- A Windows job running `jac check` + `jac test` on our sv modules (needs a
+  Windows jac — until U1 lands, run `jac check` via the source build or
+  skip with a visible counter) so app code stays Windows-clean (U1 note).
+
+
 ---
 ## 8. Phase C — server core into Jac sv
 
@@ -506,6 +586,14 @@ Common to every C workstream:
   serves everything and node is gone.
 - Auth in Jac must reproduce `RequestAuth` (C1) before any non-public
   prefix flips.
+- **Mechanics:** the prefix table lives in one file
+  (`server/jac-routes.ts`, deleted in H1); node forwards method, path,
+  query, headers (incl. auth cookie/bearer) and body unchanged, and streams
+  responses (SSE and downloads) through. The REST→Jac translation happens
+  **in Jac**, per A1's REST finding: either custom method+path routes, or a
+  single Jac dispatcher endpoint that maps today's paths onto `def:pub`s.
+  Node does no translation.
+- **Depends on:** A1 (incl. its REST finding).
 - **Done when:** proxy table exists with `/api/health` + `/api/brand` owned
   by Jac; boot order documented in Jac; route duplication (§4.3 #4) gone.
 
@@ -520,15 +608,25 @@ Common to every C workstream:
   admin|client), member visibility (`visibleTo`, `memberFrame`), pairing
   codes, email sign-in. On the desktop the loopback owner is the default
   principal; paired phones/devices arrive through the companion (F3).
-  Jac's own `__guest__`/user model is not used for our principals (it
-  would put identity in Postgres — A2); our session store stays a file.
+  Principals, sessions and paired devices are graph nodes under the
+  workspace root (A2(h)); Jac's built-in user model and `__guest__`
+  fallback are not used for our principals.
+- **Security (required before any non-public prefix flips):**
+  - loopback is not a trust boundary on a desktop (any local process or web
+    page can reach the port): require a host-issued per-launch secret on
+    every request (replacing today's Electron owner header) plus Host/
+    Origin checks against DNS rebinding;
+  - disable Jac's auto-created `admin` user and `/admin` routes and the
+    guest fallback (AGENTS §5);
+  - SSRF review of skill-fetch, mcp-http, connector and webhook outbound
+    calls; static-serving audit of the desktop host (B5 covers node).
 - **Note:** the `/__jac/` desktop broker's SSO targets a remote Jac server
   with scale SSO (research §6) — not our model; ignore for now.
 - **Done when:** all 26 session/auth endpoints served by Jac with the TS
   tests' invariants ported (request-auth, sessions, bot-visibility,
   decision-log, auto-approve, command-allowlist tests).
 
-### C2. Store, bots, threads, tasks, messages — single writer flip
+### C2. Store, bots, threads, tasks, messages — graph model, importer, cutover
 - **Scope (TS):** store.ts 2,951, message-db.ts 892, attachments.ts 724,
   message-file.ts 475, checkpoints.ts 670, bot-folder.ts 102,
   thread-starters.ts 84, profile-*.ts, bot-profile.ts, new-bot-defaults.ts,
@@ -537,26 +635,43 @@ Common to every C workstream:
   O (message pages), routes: /api/bots (create/edit/delete/model/profile/
   soul/history/projects/tasks), /api/threads, /api/attachments,
   /api/files, /api/search, /api/sidebar-sections, /api/bot-defaults.
+- **Split (sequencing):** index.ts makes ~1,052 synchronous `store.*`
+  calls and the node turn pipeline lives until C3, so the store cannot flip
+  ahead of C3 without a sync mirror (§0 forbids new ones).
+  - **C2-model (before C3):** persisted node/edge schema with aliases
+    (A2(i)), the C2a importer and C2b export, round-trip tests, read-only
+    endpoints on Jac. Node keeps writing files; no flip.
+  - **C2-cutover (lands with C3 PRs (1)–(2), behind one flag):** the graph
+    becomes the live store in the same release that moves the turn
+    pipeline; node's `Store` is deleted, not mirrored.
 - **Key step (graph store, A2):** persist `Bot`, `Thread`, `Task`,
-  `Room`, `Message` as nodes under the owner's root. The byte-faithful
-  file modules from M1 (`store.jac`, `messages.jac`, `db.jac`) become the
-  **importer's readers** (C2a) and the export writers; during the overlap
-  node's `Store` reads through C0's proxy and stops writing in one commit.
+  `Room`, `Message` as nodes under the workspace root (A2(h)). The
+  byte-faithful file modules from M1 (`store.jac`, `messages.jac`,
+  `db.jac`) become the **importer's readers** (C2a) and the export writers.
 - **C2a. Migration importer:** first launch of the Jac app (and the F4
   bridge) imports an existing `~/.openmausbot` data dir — bots.json,
   groups.json, config.json, messages.db, routines.json, webhooks.json,
-  team-computers.json, memory files, attachments index — into the graph,
-  idempotently (re-runnable, keyed by source ids), recording a receipt.
-  Conformance corpora become importer fixtures: import → export must
-  reproduce today's bytes.
+  team-computers.json, mcp-oauth.json, thread-starters, memory *metadata*,
+  attachments *index* — into the graph. Files the engines read stay
+  canonical on disk (A2(j)); only their metadata is imported.
+  - Idempotency: every imported node carries its source id
+    (`source: {file, key}`); re-import upserts by source id and never
+    overwrites a field changed in the Jac app after import (the receipt
+    records the import timestamp per node; later edits win).
+  - Receipt: `<data dir>/.jac-import/receipt.json` (source file hashes,
+    counts, per-file status); a partial failure resumes from the first
+    unfinished file.
+  - Conformance corpora become importer fixtures: import → export must
+    reproduce today's bytes.
 - **C2b. Backups on the graph:** `.ombbackup` export/restore and team
   backups read/write the graph (export via the same writers as C2a, plus
   attachments/workspace files); restore = import into a fresh database.
   Keeps old `.ombbackup` files restorable.
-- **OSP:** `Bot`, `Thread`, `Task`, `Message` nodes as the in-memory model
-  hydrated from the files (graph.jac already hydrates threads); `Owns`,
-  `Next`, `Contains` edges. Store change events become event-feed frames
-  (C3) instead of `store.onChange → broadcast`.
+- **OSP:** persistent `Bot`, `Thread`, `Task`, `Room`, `Message` nodes with
+  `Owns`, `Next`, `Contains`, `Member` edges; graph.jac's file hydration is
+  retired. Graph change events become event-feed frames (C3) instead of
+  `store.onChange → broadcast`.
+- **Depends on:** A2 spike (schema, thresholds), C0, C1.
 - **Done when:** the graph is the only live store; node no longer writes
   any of these files; store/message-db TS deleted; import→export of the
   conformance corpora is byte-identical; `store.test.ts` (2,532 LOC)
@@ -594,7 +709,11 @@ Common to every C workstream:
   rooms/decider ~2k). Split into PRs: (1) event feed + fold, (2) direct
   turns, (3) rooms/group turns, (4) queues/steer/aside, (5) watchdog,
   digests, recovery.
-- **Depends on:** A1, A4, C0, C2, D-registry part of C6.
+- **Depends on:** A1, A4, C0, C1, C2-model (cutover lands with this WS), G1 (hosted extension points), registry part of C6.
+- **PRs (each its own status row in §15, each with its own acceptance):**
+  C3.1 event feed + in-process fold (+ C2-cutover behind the flag);
+  C3.2 direct turns (`StartTurn`); C3.3 rooms/group turns;
+  C3.4 queues/steer/aside; C3.5 watchdog, digests, recovery.
 - **Done when:** golden replay passes with Jac as the only turn pipeline;
   `index.test.ts` turn/room cases pass against Jac; Jac-driver suite no
   longer has the 7 Jac-specific failures (they are pipeline-ordering issues
@@ -626,8 +745,8 @@ Common to every C workstream:
   answered through one path; routine-requests tests (2,027 LOC) ported.
 
 ### C6. Config, settings, engines/instances, MCP registry
-- **Scope:** config.ts 1,842 (63 importers — port last within C6, keep a
-  Jac `config.jac` reading/writing the same config.json), harness/registry.ts
+- **Scope:** config.ts 1,842 (63 importers — port last within C6; config
+  becomes a graph node (A2), config.json is import/export only via C2a/C2b), harness/registry.ts
   318, engine-install, provider-auth-sessions, provider-key-check,
   claude-accounts, claude-update, default-model-selection, plan-usage 907,
   harness-capabilities, key-rejections, mcp-registry 424, mcp-probe,
@@ -638,14 +757,17 @@ Common to every C workstream:
 - **Note:** the provider **registry** moves here (driver instances become
   Jac-native, removing `jacifyDrivers` and the TS driver shells' declarative
   half for ported kinds: catalog, metadata, decodeConfig, auth/login flows).
-- **Depends on:** C0, C1. **Done when:** config.json written only by Jac;
+- **Depends on:** C0, C1. **Done when:** config lives in the graph (config.json only imported/exported);
   `config.test.ts` invariants ported; settings routes on Jac.
 
 ### C7. Skills
 - skills.ts 1,513, skill-library 399, skill-fetch 268,
   skills-library-migration 251, skill-learn 84; routes skills,
   skills-library, skill-template, internal skills/stage. `Skill` node +
-  `Has` edges. Depends on C2.
+  `Has` edges. Depends on C2, C3.
+- **Done when:** skills routes + internal skills/stage on Jac; skills dirs
+  stay canonical on disk (A2(j)) with `Skill` nodes as metadata;
+  `skills.test.ts` (1,206 LOC) invariants ported; skills*.ts deleted.
 
 ### C8. Memory
 - workspace.ts 713 (partially ported), memory-upkeep 526, memory-journal
@@ -654,6 +776,10 @@ Common to every C workstream:
   memory-tidy, profile-learned, memory-organize, recall-disclosure; routes
   /api/team-memory, /api/section-context, bot memory. Scheduled upkeep →
   `@schedule`. Depends on C2, C3 (capture subscribes to turns).
+- **Done when:** memory routes on Jac; MEMORY.md and topic files stay
+  canonical on disk (A2(j)) with graph metadata; upkeep/tidy run as
+  `@schedule`; memory*.ts, recall*.ts, team-memory.ts deleted with their
+  tests' invariants ported.
 
 ### C9. Packages, presets, org library, teams
 - org-library 1,173, package-export 896, presets 612, package-import 596,
@@ -661,7 +787,11 @@ Common to every C workstream:
   247 (hook point), team-library 241, bot-directory, managed-policy,
   bot-package, package-parts, published-teams, installed-playbooks; routes
   /api/teams, /api/team-library, /api/org-library, /api/bot-presets.
-  Depends on C2, C6.
+  Depends on C2, C3, C6.
+- **Done when:** team/org-library/preset routes on Jac; package export →
+  import round-trips (`shared/package-format.ts` fixtures); org-library
+  test invariants (29) ported; package*.ts, presets.ts, org-library.ts
+  deleted.
 
 ### C10. Browser
 - browser-engine 608, browser-live 587, browser-runtime 553,
@@ -670,6 +800,8 @@ Common to every C workstream:
   /api/browser-engine/install, internal browser/mcp. The agent-browser
   sidecar is spawned by sv (no change); its bundling/signing is F/#9958.
   Depends on C3.
+- **Done when:** browser routes + internal browser/mcp on Jac; browser
+  e2e cases pass against Jac; browser-*.ts deleted.
 
 ### C11. Computers (remainder)
 - surface.ts, routes/desktop-viewer (RFB/WebSocket upgrade — **note:** no
@@ -682,6 +814,9 @@ Common to every C workstream:
   X (screen poller); routes /api/local-computer, /api/team-computers,
   bot local-computer, internal computer/*. Also B3's fixes.
   Depends on C3.
+- **Done when:** computer routes on Jac; behavior evals lazy-claim
+  scenarios and computer e2e (group-local-vm, surface-pins, openai-compat-
+  vm) pass; the `container-computer.ts` contract duplicate deleted.
 
 ### C12. Internal capability API (engine-facing)
 - index.ts G (capability tokens) + the 50 `/api/internal/*` endpoints.
@@ -689,6 +824,9 @@ Common to every C workstream:
   proxies are separate processes) but serve it from Jac; tokens are minted
   per turn generation in `StartTurn` (C3).
 - Depends on C3; pairs with D3.
+- **Done when:** all 50 `/api/internal/*` endpoints served by Jac with
+  per-turn-generation tokens minted in `StartTurn`; token kind/path checks
+  and revocation tests ported.
 
 ### C13. Usage, spend, audit, logs
 - usage-ledger 355, spend 197, model-prices 164, prices 38,
@@ -696,6 +834,9 @@ Common to every C workstream:
   thread-log-rotation 98, thread-retention 64; index.ts E; routes usage,
   plan-usage, decisions(.csv), admin-activity(.csv), activity, outbound.
   Retention/rotation timers → `@schedule`. Depends on C2, C3.
+- **Done when:** usage/audit routes (incl. CSV) on Jac; ledgers as graph
+  nodes or append-only files (decide in A2(j)); usage-ledger/spend tests
+  ported; the TS files deleted.
 
 ### C14. Routines/webhooks finish
 - Already in Jac; remove their node seams: `jac-routines.ts` mirror and
@@ -705,6 +846,20 @@ Common to every C workstream:
   `routine-requests.ts` (→ C5), calendar calls (G or here if kept),
   routes /api/routines, /api/routine-runs, /api/webhooks.
 - Depends on C0, C3.
+
+### C15. Re-home the M1–M4 Jac subsystems onto the graph
+- routines, webhooks, connectors, mcp_oauth, computers (control/team/
+  shared), workspace/team backup and the drivers keep state today as
+  file-backed module globals (routines.json, webhooks.json, …). Under A2
+  they become persistent nodes (`Routine`, `RoutineRun`, `Webhook`,
+  `McpServer` sign-in records, …); their files become C2a/C2b formats.
+- Also owns the profiling bugs: `routines._tick_body` rescans the run list
+  per run (O(n²); 125–227 ms per tick at 2,000 runs); `_js_pretty` /
+  `js_string` escaping (284 ms per save at 2,000 runs — moot once routines
+  are nodes, keep for export); `_now_iso` timestamps (fixed in common.jac —
+  verify).
+- **Depends on:** C2-model. **Done when:** none of these modules writes its
+  JSON file in normal operation; their Jac tests pass against the graph.
 
 ---
 ## 9. Phase D — drivers and engine helper processes
@@ -748,6 +903,14 @@ Common to every C workstream:
 | drivers/phone-proxy.ts, vps-container-mcp.ts | 444 | phone, VPS | G (deferred) |
 - Where an engine supports URL (HTTP/SSE) MCP servers, prefer serving the
   MCP endpoint in-process over loopback instead of a stdio child.
+- **Fallback order** (until A3 decides): (1) in-process URL MCP where the
+  engine supports it; (2) the A3 mechanism (alternate entry of the app
+  binary or a small native helper); (3) the existing node script against
+  the user's node (temporary; tracked as a shim in §15).
+- **Contract per helper** (write it down in D3's first PR): argv, env vars
+  the engine passes (`OMB_*` tokens, socket paths), stdin/stdout framing
+  (MCP JSON-RPC), the `/api/internal/*` endpoints it calls (C12), and its
+  lifetime (dies with the turn / with the app).
 
 ### D4. Shared driver infrastructure
 - local-inject 422 (13 importers), device-auth 369, prompt-split, retry,
@@ -768,9 +931,12 @@ Common to every C workstream:
   lucide-react, qrcode.react, papaparse, posthog-js, clsx, tailwind-merge,
   zod (wire), yaml. Tailwind v4 via `[client.vite] plugins`.
 - **i18n:** no built-in facility; port `src/lib/i18n.ts` (84 LOC, hand
-  written) as-is + the 11 catalogs and `generate-locale.mjs --check`.
-- **Wire:** keep the `ServerFrame` union and route shapes; generate Jac
-  `obj` types for the wire from `shared/wire.ts` (or hand-port; 778 LOC).
+  written) as-is + the 10 catalogs and `generate-locale.mjs --check`.
+- **Wire:** keep the `ServerFrame` union and route shapes. **Source of
+  truth (proposed, §17):** during the overlap `shared/` zod stays the
+  source with emitted JSON Schema validated Jac-side; at cutover (H3) Jac
+  `obj` types become the source and the Cloudflare Workers get a generated
+  TS copy.
 - **Live events:** port `src/lib/live-events.ts` (395) onto the A4 reader.
 - **api():** replace the `fetch` wrapper (~300 call sites) with typed RPC
   stubs as each endpoint lands in Jac; keep a raw-fetch shim meanwhile.
@@ -815,7 +981,8 @@ Common to every C workstream:
   wake, localControl, androidDevice, computerSharing, cloudAccount, org,
   backups), a `cl`-only replacement, or an upstream-blocked item (§14).
   Build the table in E0 from `src/types/ogb.d.ts` (405 LOC) and keep it in
-  this plan's appendix.
+  §19 (appendix). Owners for the "needs design" rows: remote environments
+  and the trusted-approval bridge → F1 lead; cloud/org flows → F7.
 
 ---
 ## 11. Phase F — desktop shell, companion, enterprise, release
@@ -872,6 +1039,12 @@ inventory; upstream issue numbers in §14):
   and webview library sign cleanly.
 - Python deps must be vendored into the bundle (the launcher's relative
   `.jac/venv` path breaks relocation — #9947).
+- **Sidecar pipeline:** `scripts/prepare-cua*.mjs`, `cua-*-release`,
+  `prepare-browser.mjs`, `prepare-cloudflared.mjs`,
+  `prepare-android-tools.mjs`, the macOS speech helper build — staged,
+  verified and signed into the Jac bundle (#9958, #9941); after-pack checks
+  ported.
+- **Acceptance includes A1's performance budgets.**
 - **Postgres ships in the app** (A2): bundle the platform Postgres
   distribution, point `JAC_PG_DIST` at it from the host/launcher, keep the
   cluster under the app data dir (not the shared `~/.cache/jac/pg/main`),
@@ -897,6 +1070,9 @@ inventory; upstream issue numbers in §14):
      single-instance/deep-link registration, and launches it;
   3. leaves the data dir untouched; the Jac app's first launch runs the
      C2a importer into its graph (the files stay as the rollback copy).
+- **Rollback promise:** the C2b export writes the old file formats, so a
+  user can return to the last Electron build with data created in the Jac
+  app (export → old data dir). Documented and tested once per release.
 - Windows / Intel macOS: no bridge release until WS-U1 lands (A6); then
   the same bridge flow (secrets migration needs the Electron-side decrypt,
   so the Windows bridge release ships from the last Electron build).
@@ -904,7 +1080,7 @@ inventory; upstream issue numbers in §14):
   carries the bridge release too.
 
 ### F5. Enterprise
-- `enterprise/` (960 LOC): licence verification (Ed25519) and hosted
+- `enterprise/` (346 impl LOC): licence verification (Ed25519) and hosted
   workspace sign-in; ports with C1 (it imports request-auth, sessions,
   hosted-contract). Keep the `OMB_ENTERPRISE_DIR` hook semantics as a Jac
   module that is absent in the open-source edition.
@@ -915,6 +1091,24 @@ inventory; upstream issue numbers in §14):
   (server without the window, systemd/launchd unit). Becomes a Jac CLI
   entry that runs the same workspace headless (`jac run` service mode) —
   the Docker/self-hosted image uses it.
+- **Distribution channels** (each decided and owned here): the
+  `Dockerfile` (two targets: tenant and cloud-home) with Postgres inside
+  the image, linux-arm64; `deploy/` (fly, podman, compose, Caddy); the npm
+  package (`scripts/build-npm-package.mjs`, `npx openmausbot serve`) —
+  keep (wrapping the Jac binary) or retire; the external MCP server
+  (`scripts/mcp-server.ts`); `pair-cli`, `fleet-cli` (G).
+- **Done when:** the headless Jac app serves the API and event feed with no
+  window; the Docker image builds and passes a smoke in CI.
+
+### F7. Cloud and organization clients
+- Electron-side clients of the Cloudflare Workers and hosted services move
+  to sv, each with a named owner: `control-plane-client.mjs`,
+  cloud-account, org enrollment and branding, company backups (+schedule),
+  the managed-companion guardian and tunnel (cloudflared), the
+  composio-broker credential rotation, org-library relay, cloud move,
+  lending. The Workers themselves stay TS (no change).
+- Secrets they hold move to the keychain (F1). **Depends on:** C1, F1, G2
+  for the hosted parts.
 
 ---
 
@@ -948,7 +1142,23 @@ inventory; upstream issue numbers in §14):
   `apps/docs` jobs (they stay TS per the migration plan).
 
 ---
-## 13a. Phase U — upstream contributions we own
+## 13a. Phase X — cross-cutting (alongside C–F)
+
+- **X1 Observability:** log locations under the app data dir, turn logs
+  (thread NDJSON tee), crash capture for the sv process and webview, the
+  diagnostics export (redacted bundle) — parity with today's
+  `diagnostics.mjs` and thread-log rotation.
+- **X2 Accessibility:** every E area's acceptance requires keyboard and
+  ARIA parity with the React original; a11y checks in the UI e2e suite.
+- **X3 Telemetry and consent:** port `src/lib/analytics.ts` (PostHog,
+  app_open, opt-out) with identical consent semantics; no new telemetry
+  without a product decision.
+- **X4 Docs:** `apps/docs` updates per release — install per platform,
+  data location (graph DB + canonical files), the Windows/Intel-mac status
+  (WS-U1), self-hosting with the headless image, migration from the
+  Electron app.
+
+## 13b. Phase U — upstream contributions we own
 
 ### U1. Windows (and Intel macOS) for jac-desktop — our PRs to jaseci-labs/jac
 Evidence (upstream main, 2026-10-10): the native backend already has a
@@ -961,7 +1171,9 @@ COFF/PE linker (`jaclang/compiler/backends/native/pe_linker.jac`) and
 2. **Windows runtime artifact** — the desktop build grafts the runtime from
    the running `jac` binary; jaseci publishes no Windows `jac`. Needs the
    Windows build of the fused runtime in jaseci's release pipeline (and the
-   Intel-mac build, broken per #8805).
+   Intel-mac build: #8805 — about release gating — is closed, yet v0.37.25
+   still ships no `macos-x86_64` asset; file the build failure itself as its
+   own issue).
 3. **Postgres helper on Windows (required — A2 uses the graph store)** —
    `data/impl/pgembed.impl.jac` `_platform_slug` knows only Linux/Darwin
    and locks with `fcntl`; add the `windows-amd64` zonky slug, a Windows
@@ -976,6 +1188,22 @@ COFF/PE linker (`jaclang/compiler/backends/native/pe_linker.jac`) and
   `workflow` token scope for pushing to the fork (see #9934 note).
 - **Done when:** `jac build --platform windows` of our app produces a
   working binary in CI on a Windows runner, upstream PRs merged.
+
+---
+
+### U2. Upstream fixes on the critical path — our PRs (Phase A, not later)
+- #9959 memoize embedded-PG `ensure()` per process (low effort; every op).
+- #9944 per-app, offline embedded Postgres for desktop apps (A2, F2).
+- #9946 release topology: service apps colocated in desktop release builds
+  (A1).
+- Process as U1 (AGENTS §3); start as soon as A1/A2 confirm each problem
+  on the pin. Track each PR in §14.
+
+### U1 timing note
+U1.3 (pgembed on Windows) is small and independent — start it in Phase A.
+Add a Windows CI job in Phase B that runs `jac check` and `jac test` on our
+sv modules, so "app code stays Windows-clean" is checked continuously
+rather than discovered when U1 lands.
 
 ---
 
@@ -1006,9 +1234,9 @@ COFF/PE linker (`jaclang/compiler/backends/native/pe_linker.jac`) and
 | #9957 | keychain plugin | secrets | sv `keyring` |
 | #9958 | bundle sidecar binaries/resources | CUA, browser engine, cloudflared, speech helper | post-build copy step |
 | #9934 | checker: `raise <any>` is E1090 | — | `err: Exception = x; raise err;` |
-| #6675 | positional-only args across `@jac/desktop` | F1 | pass positionally |
+| #6675 | positional-only args across `@jac/desktop` — **closed NOT_PLANNED by the stale bot (2026-09-04), not fixed** | F1 | pass positionally; re-check on the pin, then reopen or send a PR (AGENTS §3) |
 | #9683 | compile cache keyed on mtime | CI warm cache | pin mtimes in CI (done) |
-| #8805 | Intel macOS build broken/non-blocking | #9943 | — |
+| #8805 | (closed 2026-08-31; was about release gating) Intel-mac binary still absent in v0.37.25 | #9943 | file the abort as its own issue (U1) |
 | #9959 | embedded PG `ensure()` re-runs every request: no-op `def:pub` 40–60 ms, two transactions | every UI call + streamed-turn write (A2) | none app-side (`JAC_DB_URL` can't address the embedded socket); fix upstream |
 | #9164 | redundant compilation (we added: every module compiled twice, pass 2 = 79 % of cold compile) | A5, dev loop, CI | CI warm cache |
 | #9411 | three commits per walker request, each re-hashing every loaded anchor | walker-heavy endpoints (A2 throughput) | — |
@@ -1036,18 +1264,31 @@ Profiling findings are tracked as #9959 (per-request Postgres setup —
 | B4 | Docs truth + dead code | partial (AGENTS §7 corrected) | | |
 | B5 | Static serving audit | not started | | |
 | B6 | Pre-existing routine failures | not started | | |
-| C0–C14 | Server core | not started (M1–M4 ports exist as sidecar subsystems) | | |
+| C0, C1 | Router, auth + security | not started | | |
+| C2-model | Graph schema (aliases) + read-only endpoints | not started | | |
+| C2a | Importer (receipts, idempotent) | not started | | |
+| C2b | Backups/export through the graph | not started | | |
+| C3.1–C3.5 | Event feed+fold (+C2-cutover), direct turns, rooms, queues, watchdog/recovery | not started | | |
+| C4–C14 | Remaining server core | not started (M1–M4 ports exist as sidecar subsystems) | | |
+| C15 | Re-home M1–M4 subsystems onto the graph | not started | | |
+| B7, B8 | Evals retarget; Windows CI for sv | not started | | |
+| U2 | Upstream PRs #9959, #9944, #9946 | not started | | |
+| X1–X4 | Cross-cutting | not started | | |
 | D1 | Jac drivers default (claude, codex, openai-compat) | blocked on C3 | | |
 | D2–D4 | Remaining drivers, helpers, infra | not started | | |
-| E0–E10 | Client | not started | | |
-| F1–F6 | Desktop, companion, enterprise, release | not started | | |
+| E0, E1 | Client foundations + state store | not started | | |
+| E2–E9 | Client feature areas (E3, E4, E6, E7 split into sub-PRs of ≤3k LOC) | not started | | |
+| E10 | `window.ogb` replacement map (§19) | not started | | |
+| F1–F7 | Desktop, companion, enterprise, release, CLI/distribution, cloud clients | not started | | |
 | G1–G3 | Hosted tier | not started | | |
 | H1–H4 | Decommission | not started | | |
 
 Shims in flight (must be deleted by the named WS): the node↔Jac seam
 (`server/jac-*.ts`, bridge ops, mirrors) → H1; `server/local-computer.ts`
 TS descriptor reader duplicate → F2; `container-computer.ts` pure
-contract duplicate → C11; dual store/message-db writers → C2.
+contract duplicate → C11; dual store/message-db writers → C2-cutover;
+the C0 node reverse proxy + prefix table → H1; the E0 raw-fetch shim →
+E2–E9 (per area); D3 fallback (3) node scripts → D3.
 
 ---
 
@@ -1080,9 +1321,16 @@ contract duplicate → C11; dual store/message-db writers → C2.
    voice/live calls/TTS, phone).
 4. **Remote environments** (desktop window loading a remote server's UI) —
    keep, redesign, or drop for the Jac app.
-5. **Pin bump** — stay on 0.37.21 until A1, or move to 0.37.25+ (fixes the
-   dict-slot narrowing quirk and likely the stringified-default defect;
+5. **Pin bump — decide before A1** — stay on 0.37.21, or move to 0.37.25+
+   (fixes the dict-slot narrowing quirk and likely the stringified-default
+   defect; fixes for #9959/#9944/#9946 will only land on newer versions;
    costs a full re-verification).
+6. **Wire source of truth** — proposed: `shared/` zod during the overlap,
+   Jac `obj` types at cutover with a generated TS copy for the Workers.
+7. **Node for engines** (A3) — require the user's node, managed download,
+   or bundle.
+8. **Roots/principals** (A2(h)) — proposed: one workspace root, access
+   control in our code.
 
 ---
 
@@ -1095,11 +1343,19 @@ contract duplicate → C11; dual store/message-db writers → C2.
 | C | ~26k (index.ts) + ~45k (server core in scope) | C3 is ~⅓ of it |
 | D | ~15.4k drivers + ~2.7k helpers | ACP core unlocks 10 kinds |
 | E | ~124k client | biggest by volume; mechanical per area |
-| F | ~19k Electron + ~4k companion + ~1k enterprise + packaging | upstream-gated |
+| F | ~19k Electron + ~4k companion + ~0.35k enterprise + packaging | upstream-gated |
 | G | ~11.5k | decision-gated |
 | H | deletions | |
 
-Parallelism: after C0 + C2, C4–C14 run in parallel (separate modules);
-E areas run in parallel after E0/E1; D2 kinds run in parallel after the
-ACP core. Use worktrees and the §3 conventions; merge through PR #1's
+Parallelism: see §5 (C4, C5, C8, C10–C14 wait for C3; E areas after
+E0/E1; D2 kinds after the ACP core). Use worktrees and the §3 conventions; merge through PR #1's
 branch (or per-workstream PRs into it) with CI as the gate.
+
+---
+
+## 19. Appendix — `window.ogb` replacement map (filled in E0/E10)
+
+| `ogb` member | Destination (`@jac/desktop` plugin / sv endpoint / `cl`-only / upstream #) | Owner | Status |
+|---|---|---|---|
+| _(to be generated from `src/types/ogb.d.ts` in E0)_ | | | |
+
