@@ -181,6 +181,9 @@ core turn pipeline on the runtime.
 | --- | --- | --- | --- | --- |
 | 1 | `def:pub` optional params bind the STRINGIFIED default (`'None'`, `'40'`) when the request omits them — `introspect_callable` stringifies `param.default` while walkers keep the raw value | `def:pub f(x: (str\|None) = None)` + POST `{}` → `x == "None"` (string) | [jaseci-labs/jac#9865](https://github.com/jaseci-labs/jac/pull/9865) (`fix/introspect-callable-raw-defaults`, one-liner + 3 regression tests) | merged-pending; local runtime patched via `~/.cache/jac/rt/*/site`; conformance driver sends explicit defaults meanwhile |
 | 2 | Module `glob` vars cannot be rebound from `def` scope — plain `x = v` shadows locally (reads see the module default, or UnboundLocalError) | `db()`'s `_handle = open_db()` became a local; later calls saw `None` | not filed — language semantics, not a bug; doc note in AGENTS.md | fixed in our modules via `_state` dict / `globals()["x"]` |
+| 3 | `raise x` with `x` typed `any` is E1090 "Cannot raise Any" (also on 0.37.25) | `def f(b: dict[str, any]) { raise b["error"]; }` | in flight (fix in `exit_raise_stmt`, type_checker_pass) | workaround in tree: `err: Exception = b["error"]; raise err;` |
+| 4 | dict-slot narrowing after a comparison: `if h["k"] == "x" { h["k"] = None; }` is E1001 on 0.37.21 | as shown | believed fixed by 0.37.25 (AGENTS §7 quirk) | workaround: `h.update({...})` |
+
 ## Open decisions (reviewer's call; recommendations marked)
 
 1. **Scope breadth**: all backend (server + companion + enterprise) in Jac —
@@ -271,7 +274,32 @@ core turn pipeline on the runtime.
   parity is a verification-fixture A/B (TS vs Jac): identical canonical
   event streams and transcripts for a two-turn run (incl. failed resume) and
   an approval + Stop run; the fake app-server's parent is the jac process.
-- M4: long-tail subsystems on Jac; verify scripts green.
+- M3 follow-up (2026-10-10): codex (`driver_codex*.jac`, 96 invariants vs
+  the fake app-server) and openai-compat (`driver_openai_chat*.jac` — the
+  real kind behind openai-chat.ts; 115 tests) on Jac behind
+  `OMB_JAC_DRIVERS`. **Jac-as-default is NOT done**: TS drivers still run
+  unless the gate is set. Gate for the flip: full `index.test.ts` with
+  `OMB_JAC_DRIVERS=all` matching the TS run. Status: 45 failures → 11 after
+  driver ops moved to per-instance queues (a9ca900); 4 of 11 also fail on
+  TS; 7 are Jac-specific and open — steering a paired person's message,
+  room Works-on Local VM refusal, goal-run park race (a pre-existing room
+  turn race in `handleRuntimeEvent`: a late `turn.completed` releases the
+  *current* speaker's resources; exposed by faster event drain), failed
+  credential-card continuation, two Boat key/journal cases, pinned-computer
+  dispatch. Golden `golden-handoff` passes on Jac drivers.
+- M4: long-tail subsystems on Jac; verify scripts green. **In progress
+  2026-10-10** (each: Jac module + test annex, `server/jac-<name>.ts`
+  facade/mirror, TS impl + unit tests deleted):
+  webhooks (e8d46bf; ingress listener stays node), connected apps/Composio
+  (42c7600; per-turn stdio connector-proxy and relay audit stay node),
+  MCP OAuth sign-in (29b81c2; registry/gate/probe/http and stdio proxies
+  stay TS — schema validation and spawned processes), workspace + team
+  backups (b54c4b0; HTTP streaming routes + maintenance gate stay node;
+  restore resets routines/webhooks module state), computers local +
+  container (9a2057f; graph-modelled control/leases/team/lending; pure
+  contract helpers stay TS; VPS/cloud deferred). Open: harness cold-compile
+  time (>580s, see AGENTS §9) is now the main operational risk; mirrors do
+  not refresh after a harness respawn (control/team computers).
 - M5: `server/index.ts` deleted; companion + enterprise ported; single
   process again; plan closed out in `docs/verification/`.
 - M6: `src/` subtrees ported to Jac `cl`; TS client deleted when coverage

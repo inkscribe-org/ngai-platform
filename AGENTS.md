@@ -225,3 +225,73 @@ reference port. For each subsystem:
   `TMPDIR=~/.cache/jac/tmp` (the shared daemon's socket dir).
 - Validate: `jac check` + `jac test` on the pin (0.37.21), `tsc -p
   tsconfig.server.json`, affected vitest files, one live `jac run` smoke.
+
+## 9. Seam transport + verification runbook (learned 2026-10-10)
+
+**Which node→Jac call to use** (all in `server/jac-routines.ts`):
+- `jacOp` — one global serialized chain. Only for ops whose ordering
+  matters against routines/webhooks state (short mutations). Never from a
+  bridge handler (deadlock).
+- `jacOpUnordered(name, args, timeoutMs)` — off the chain, own budget.
+  Slow upstream I/O (connected-apps relay, MCP sign-in, computers' long
+  poll/exec/frames). Budgets over 290s switch to the raw-`http` transport:
+  `fetch`/undici abandons any request at 300s of no response headers,
+  whatever the AbortSignal says. The Jac side of such a subsystem must lock
+  its own state — the harness serves sync `def:pub`s on a worker pool.
+- `jacLongOp(name, args, {serialize})` — no timeout (workspace snapshot,
+  restore commit); `serialize: true` holds the chain to quiesce everything.
+- Driver ops (`server/jac-drivers.ts`) — a queue **per driver instance**,
+  never the global chain: Jac-side interrupt/dispose block for seconds while
+  a CLI process tree is reaped. On the global chain this cascaded into 45
+  `index.test.ts` failures (settings locks never released → 409s); per
+  instance it is 11.
+
+**Harness compile time is the dominant cost.** A cold `jac run` of
+jac/harness compiles every module (and type-checks every `.test.jac`
+annex): ~98s → 209s → >580s as ports landed (at 9a2057f). Warm boot is ~2s.
+Any `.jac` edit makes the next boot cold. Symptoms of a cold cache, not a
+regression: `[jac] Compiling server modules...`, golden replay "busy=false
+for bot1 (waited 20000ms)" / "missing turn for bot1", `index.test.ts`
+"Hook timed out" / all tests skipped. **Warm the cache before any
+end-to-end run** (and after every merge that touches `jac/harness`):
+```
+cd jac/harness && OMB_DATA_DIR=$(mktemp -d) TMPDIR=~/.cache/jac/tmp \
+  ~/.local/share/jacup/versions/0.37.21/jac run --no-client -p 47352
+# ready when POST /function/driver_state answers {"ok": true, ...}
+```
+Each git worktree has its own `.jac/` cache — a fresh worktree is cold.
+
+**End-to-end runs**
+- Golden: `node --experimental-strip-types evals/golden/run-golden-cli.ts
+  --scenario golden-handoff` (the only golden scenario; 20s step budget).
+  Prefix `OMB_JAC_DRIVERS=all` for the Jac drivers. Both pass on a warm
+  cache (TS ~11s, Jac ~6s).
+- `index.test.ts`: spawned servers get the pinned jac + real cache via
+  `JAC_ENV` (HOME is redirected per server); `beforeAll` waits up to 150s
+  for the harness. `OMB_JAC_DRIVERS=all npx vitest run server/index.test.ts`
+  runs the suite through the Jac drivers (the var is forwarded).
+- Known-failing `index.test.ts` cases with the TS drivers (fail on the
+  pre-webhooks commit too; never ran before the test env could boot the
+  harness): "reports a failed routine once, not twice", "stops a local
+  bot's exact channel and routine work through the emergency endpoint",
+  "tells the desktop whether to hold the computer awake for a routine due
+  within the hour"; "rejects overlapping provider configuration writes" is
+  timing-flaky. "restores a live unanswered provider question after a
+  server restart" failed on base too but passed in the latest run.
+- Machine load matters: node boot in tests has a 20s deadline; with
+  several agents compiling jac (load avg 25–98) timing tests flake. Re-run a
+  failure alone before treating it as a regression, and compare against the
+  base commit in a worktree (warm its cache first).
+
+**Parallel ports in agent worktrees**: agent worktrees may start from
+`main` — reset them onto `jac/codebase-migration`. Merge by cherry-pick;
+conflicts are mechanical: each port appends a block to the end of
+`harness.jac`, and adds a mirror `start()` line to the boot block after
+`startJacRoutines()` in `server/index.ts` — keep both sides. Do merges in a
+side worktree while an `index.test.ts` run is using the main tree (spawned
+servers re-read sources mid-run).
+
+**Checked, not a bug**: `[?field == field]` in a node filter — on 0.37.21
+the right-hand side resolves to the enclosing function's parameter, not the
+node's field (W3040 is only a checker warning; `graph.jac thread_node /
+bot_node` return the right node).
