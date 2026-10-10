@@ -176,11 +176,14 @@ core turn pipeline on the runtime.
     `[desktop.plugins]`): `fs`, `dialog`, `clipboard`, `notification`,
     `app_window`, `shell` (deny-all by default), `path`; SSO/OAuth via the
     `/__jac/` broker.
-  - **not documented / to drive upstream (AGENTS §3)**: system tray,
-    auto-update (+ the legacy updater mirror), deep links / custom URL
-    protocol, login-item autostart, single-instance lock, per-OS
-    installers and code signing/notarization (upstream #6436, open),
-    keyword args across the `@jac/desktop` boundary (#6675).
+  - **missing upstream — filed 2026-10-10 (AGENTS §3)**: system tray
+    (jaseci-labs/jac#9936), auto-update (#9937; our legacy updater mirror
+    rides on it), deep links / custom URL scheme (#9938), login-item
+    autostart (#9939), single-instance lock with argument forwarding
+    (#9940), per-OS installers + code signing/notarization (#9941 — #6436 is
+    closed though the docs still cite it as open); keyword args across the
+    `@jac/desktop` boundary (#6675, existing). Related perf: jac's compile
+    cache is keyed on mtime (#9683, existing).
   - **ours to port**: the CUA/local-computer native helpers and their
     spawn/signing, the managed-companion guardian, the shared-terminal and
     browser-engine sidecars — reachable from sv code as subprocesses.
