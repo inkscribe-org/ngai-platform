@@ -453,10 +453,23 @@ on a disposable machine/VM, not on the shared dev box.
 - **Also:** child-process lifetime when the window closes (host calls
   `Py_Finalize`; nothing reaps children — research §5), SIGCHLD/killpg
   behaviour on a non-main-thread loop, process-group spawn on macOS.
-- **Node for engines:** several engines are themselves node CLIs and
-  `engine-install.ts` installs them with `npm install -g` (needs npm on
-  PATH); today some helpers lean on Electron's node. Decide the end state:
-  require the user's node, offer a managed node download, or bundle node.
+- **Engines do not need node (decided 2026-10-10).** The app never
+  installs, bundles or requires node — neither for our helpers (D3) nor
+  for engines. Engines are installed from **native** distributions only;
+  `engine-install.ts`'s `npm install -g` path is removed (C6):
+  | Engine | Install today | Node-free install |
+  |---|---|---|
+  | claudeAgent | `npm install -g @anthropic-ai/claude-code` | Claude Code native installer/binary (verify in A3) |
+  | codex | `npm install -g @openai/codex` | codex native release binaries (Rust) (verify) |
+  | opencodeGo | `npm install -g opencode-ai` | opencode native installer (Go binary) (verify) |
+  | cursor, droid, grok, hermes, kimi, qwen | curl / PowerShell installers | already native |
+  | antigravity | managed download | already native |
+  | piAgent | `npm install -g @earendil-works/pi-coding-agent` (+ our TS extension loaded into pi) | **no native build known — §17 decision** |
+  | minimax | `npm install -g mmx-cli` | **no native build known — §17 decision** |
+  | geminiAgent | none (gemini-cli is an npm package) | **§17 decision** |
+  | customAcp | user's own command | user's choice (may be anything) |
+  Managed installs download a pinned, checksummed native artifact (as
+  antigravity does today) into the app's tools dir.
 - **Done when:** one proxy (the permission proxy) runs from a release
   binary without our node, round-trips a permission ask, and dies with the
   app; the node-for-engines decision is recorded in §17.
@@ -755,6 +768,8 @@ Common to every C workstream:
   AH (settings surface, `configStatus`), F (provider auth); routes
   /api/config (PUT ~545 LOC), /api/instances, /api/cli-*, /api/mcp/servers,
   /api/keys/test.
+- **Engine installs:** native installers/binaries only (A3); remove the
+  npm installer path of `engine-install.ts`.
 - **Note:** the provider **registry** moves here (driver instances become
   Jac-native, removing `jacifyDrivers` and the TS driver shells' declarative
   half for ported kinds: catalog, metadata, decodeConfig, auth/login flows).
@@ -883,7 +898,7 @@ Common to every C workstream:
 | grok (xAI API), minimax, mistral, cerebras | 65–136 LOC each, on the openai-chat runtime | `_<kind>_options` + `chat_runtime_impl` registration in `driver_openai_chat.jac` — small |
 | ACP family: acp/core 2,340 + grokAgent, opencodeGo, kimiAgent, hermesAgent, cursorAgent, droidAgent, qwenAgent, geminiAgent, customAcp | ~3.5k kinds + core | port `acp/core` once as `driver_acp.jac` (JSON-RPC over stdio, like codex's app-server reader), then each kind is config; fake: `server/testing/fake-acp-cli.ts` |
 | antigravityAgent | 1,927 (on acp/core) | after ACP core |
-| piAgent | pi.ts 1,406 + pi-mcp-extension 705 | the extension runs *inside* the pi CLI (TS, loaded via `-e`) — it stays TS as an asset shipped with the app, spawned by pi, not by us; port the driver only |
+| piAgent | pi.ts 1,406 + pi-mcp-extension 705 | pi is an npm/node CLI and our extension runs inside it — conflicts with "engines must not need node" (A3); port only if §17 decision 7 keeps it (bring-your-own or a native build) |
 - Priority by usage (plan "Decided scope": claude, codex, openai-chat, pi,
   grok first). Each kind ends with its TS driver deleted and its
   `*.test.ts` invariants ported against the existing fake CLI.
@@ -906,8 +921,8 @@ Common to every C workstream:
   MCP endpoint in-process over loopback instead of a stdio child.
 - **Fallback order** (until A3 decides): (1) in-process URL MCP where the
   engine supports it; (2) the A3 mechanism (alternate entry of the app
-  binary or a small native helper); (3) the existing node script against
-  the user's node (temporary; tracked as a shim in §15).
+  binary or a small native helper). No node fallback (engines and helpers
+  must not need node — A3).
 - **Contract per helper** (write it down in D3's first PR): argv, env vars
   the engine passes (`OMB_*` tokens, socket paths), stdin/stdout framing
   (MCP JSON-RPC), the `/api/internal/*` endpoints it calls (C12), and its
@@ -1295,7 +1310,7 @@ Shims in flight (must be deleted by the named WS): the node↔Jac seam
 TS descriptor reader duplicate → F2; `container-computer.ts` pure
 contract duplicate → C11; dual store/message-db writers → C2-cutover;
 the C0 node reverse proxy + prefix table → H1; the E0 raw-fetch shim →
-E2–E9 (per area); D3 fallback (3) node scripts → D3.
+E2–E9 (per area).
 
 ---
 
@@ -1335,8 +1350,12 @@ E2–E9 (per area); D3 fallback (3) node scripts → D3.
 6. ~~Wire source of truth~~ **decided 2026-10-10: Jac only, no zod.** Jac
    `obj` types are the single definition; TS consumers get generated
    types (E0).
-7. **Node for engines** (A3) — require the user's node, managed download,
-   or bundle.
+7. ~~Node for engines~~ **decided 2026-10-10: engines must not need node**
+   — native installs only (A3 table). Still open: what to do with engines
+   that only ship as npm packages — **piAgent** (and our TS extension that
+   runs inside it), **minimax** (`mmx-cli`), **geminiAgent** (gemini-cli):
+   drop them, keep them as bring-your-own (the user installs the CLI; the
+   app never touches node), or ask the vendors for native builds.
 8. **Roots/principals** (A2(h)) — proposed: one workspace root, access
    control in our code.
 
