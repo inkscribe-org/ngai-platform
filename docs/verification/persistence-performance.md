@@ -99,7 +99,8 @@ finding without justifying a wholesale asynchronous writer/logger rewrite.
 ## Verification commands
 
 ```sh
-pnpm exec vitest run server/message-search-worker.test.ts server/message-db.test.ts server/message-search.e2e.test.ts server/bot-visibility.e2e.test.ts server/workspace-backup.test.ts
+pnpm exec vitest run server/message-search-worker.test.ts server/message-db.test.ts server/message-search.e2e.test.ts server/bot-visibility.e2e.test.ts
+(cd jac/harness && TMPDIR=~/.cache/jac/tmp jac test workspace_backup.test.jac)
 pnpm exec vitest run server/index.test.ts -t 'searches transcripts and exports'
 pnpm test:packaged-server
 ```

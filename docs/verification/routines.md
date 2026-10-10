@@ -24,7 +24,8 @@ This guard only applies to agent creation proposals; intentional duplicates
 in the manual editor remain possible. Existing routines are never removed.
 
 ```sh
-pnpm exec vitest run shared/routine-schedule.test.ts server/routine-cron.e2e.test.ts server/routine-requests.test.ts server/routines.test.ts server/routines-startup.test.ts src/components/routines/cron-editor.test.ts src/lib/routine-calendar.test.ts src/lib/schedule-label.test.ts server/bot-package.test.ts server/package-export.test.ts
+pnpm exec vitest run shared/routine-schedule.test.ts server/routine-cron.e2e.test.ts server/routine-requests.test.ts server/routines-startup.test.ts src/components/routines/cron-editor.test.ts src/lib/routine-calendar.test.ts src/lib/schedule-label.test.ts server/bot-package.test.ts server/package-export.test.ts
+(cd jac/harness && TMPDIR=~/.cache/jac/tmp jac test routines.test.jac)
 OMB_UI_E2E=1 pnpm exec vitest run scripts/testing/cron-routines-ui.e2e.test.ts
 ```
 
@@ -185,7 +186,8 @@ pnpm exec vitest run server/vps-routing.test.ts server/routine-cron.e2e.test.ts
 ```
 
 ```sh
-pnpm exec vitest run server/routines.test.ts server/routines-startup.test.ts server/routine-results.e2e.test.ts server/routine-delegation.e2e.test.ts server/drivers/agents-proxy.test.ts
+pnpm exec vitest run server/routines-startup.test.ts server/routine-results.e2e.test.ts server/routine-delegation.e2e.test.ts server/drivers/agents-proxy.test.ts
+(cd jac/harness && TMPDIR=~/.cache/jac/tmp jac test routines.test.jac)
 pnpm exec vitest run src/components/routines/RoutineViews.test.ts src/components/routines/ResultsDestination.test.ts src/components/bot-settings/RoutinesSection.test.ts src/components/RoutineRunCard.test.ts src/components/BotProjects.test.ts src/lib/folder-read.test.ts src/lib/computer-panel-view.test.ts src/state/store.test.ts
 ```
 
@@ -203,13 +205,18 @@ unfinished work remains deduplicated beyond that window. A full retry ledger
 rejects new work rather than discarding identities that senders may still retry.
 
 ```sh
-pnpm exec vitest run server/webhook-idempotency.test.ts server/webhook-restart.e2e.test.ts
+(cd jac/harness && TMPDIR=~/.cache/jac/tmp jac test webhooks.test.jac)
+(cd jac/harness && TMPDIR=~/.cache/jac/tmp jac test routines.test.jac)
+pnpm exec vitest run server/index.test.ts -t "independent webhook"
 ```
 
-The restart test launches a disposable fake-engine server, creates a webhook,
-then exits an owned worker between the execution and ingress commits. It restarts
-that same isolated server and checks that redelivery returns the original run ID
-with one execution. Its retained JSON evidence includes the receipt and transcript.
+The webhook and routines annexes pin delivery dedup across a reload of
+`webhooks.json`/`routines.json` (a restart of the harness) and the seven-day
+receipt window; the `index.test.ts` case drives a real delivery, retry and
+secret rotation through node's ingress and the Jac harness. The former
+`webhook-restart.e2e.test.ts` (an owned worker killed between the execution
+and ingress commits) was deleted with the in-process RoutineManager in phase 2
+and has no Jac-side equivalent yet.
 
 The results integration fixture additionally proves fresh provider contexts,
 saved destination snapshots, dated result cards, approval links, deleted-thread

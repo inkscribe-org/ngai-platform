@@ -3,7 +3,8 @@
 Run the focused unit tests and API tests:
 
 ```sh
-pnpm exec vitest run server/mcp-oauth.test.ts server/mcp-oauth-discovery.test.ts server/mcp-oauth-store.test.ts server/mcp-probe.test.ts src/lib/mcp-sign-in.test.ts src/components/McpServersPanel.test.ts
+pnpm exec vitest run server/mcp-probe.test.ts src/lib/mcp-sign-in.test.ts src/components/McpServersPanel.test.ts
+(cd jac/harness && TMPDIR=~/.cache/jac/tmp jac test mcp_oauth.test.jac)
 pnpm exec vitest run server/index.test.ts -t 'MCP OAuth|OAuth URL MCP'
 ```
 

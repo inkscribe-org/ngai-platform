@@ -198,7 +198,8 @@ and a native operation already admitted may have completed.
 ## Connector and authority tests
 
 ```sh
-pnpm exec vitest run server/shared-computers.test.ts server/shared-computers.e2e.test.ts server/shared-computers.gate.test.ts
+pnpm exec vitest run server/shared-computers.e2e.test.ts server/shared-computers.gate.test.ts
+(cd jac/harness && TMPDIR=~/.cache/jac/tmp jac test shared_computers.test.jac)
 node --test electron/shared-computer-access.node-test.mjs electron/lending-guards.node-test.mjs
 ```
 
