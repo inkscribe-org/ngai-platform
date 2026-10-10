@@ -1050,14 +1050,21 @@ def import_team_backup(input: any, selection: any, existing: dict[str, any], vis
         }
         return {"name": backup["name"], "bot_ids": created_bot_ids, "group_ids": created_group_ids, "routines": created_routines};
     } except Exception as error {
-        for routine in created_routines { _hook("routine_remove")(routine["id"]); }
+        # Rollback is best-effort per step: a failed routine removal (or a
+        # bridge failure) must not skip the store rollback or replace the
+        # error the caller sees.
+        for routine in created_routines {
+            try { _hook("routine_remove")(routine["id"]); } except Exception { }
+        }
         # createBot/createGroup can throw during persistence before returning;
         # node removes every record absent from `existing`, not just ours.
-        _store("rollback", {
-            "existingBotIds": [b.get("id") for b in ex_bots],
-            "existingGroupIds": [g.get("id") for g in ex_groups],
-            "sections": list(sections.values()),
-        });
+        try {
+            _store("rollback", {
+                "existingBotIds": [b.get("id") for b in ex_bots],
+                "existingGroupIds": [g.get("id") for g in ex_groups],
+                "sections": list(sections.values()),
+            });
+        } except Exception { }
         raise error;
     }
 }

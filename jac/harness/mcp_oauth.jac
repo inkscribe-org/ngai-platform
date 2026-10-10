@@ -1136,8 +1136,14 @@ def _begin(name: str, url: str, starting: dict[str, any], www_authenticate: any)
         timer = threading.Timer(lifetime_ms / 1000.0, _expire);
         timer.daemon = True;
         fl["expiry"] = timer;
-        holder["flow"] = fl;
         with _LOCK {
+            # Ops run on concurrent threads: a cancel/forget/dispose that
+            # landed after the check above only flagged `starting`, so
+            # re-check before the flow goes live (the except closes srv).
+            if starting["cancelled"] {
+                raise _sign_in_error(409, "Sign-in cancelled because the session or server changed.");
+            }
+            holder["flow"] = fl;
             _mo["flows"][name] = fl;
             fl["serving"] = True;
         }

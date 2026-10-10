@@ -1270,7 +1270,19 @@ def wb_read_staged(data_dir: str, id: any) -> dict[str, any] {
     return out;
 }
 
+# Job removal runs off node's serialized op chain (jacLongOp, unserialized)
+# so it can race commit/apply on a worker thread: without this lock a job
+# could be rmtree'd after remove's "still needed?" check but while commit
+# reads its staged/ tree, before pending-restore.json names it.
+glob _restore_lock: any = threading.RLock();
+
 def wb_commit(data_dir: str, id: any) -> dict[str, any] {
+    with _restore_lock {
+        return _wb_commit_locked(data_dir, id);
+    }
+}
+
+def _wb_commit_locked(data_dir: str, id: any) -> dict[str, any] {
     top = _backup_root(data_dir);
     if os.path.exists(os.path.join(top, "pending-restore.json")) { _fail("A workspace restore is already waiting for restart."); }
     if os.path.exists(os.path.join(top, f"safety-{id}")) {
@@ -2129,6 +2141,12 @@ def _unlink_quiet(path: str) {
 }
 
 def wb_apply_pending(data_dir: str) -> dict[str, any] {
+    with _restore_lock {
+        return _wb_apply_pending_locked(data_dir);
+    }
+}
+
+def _wb_apply_pending_locked(data_dir: str) -> dict[str, any] {
     # Runs before node constructs any config, Store, session or provider
     # object. The DATA_DIR and all destination identity/session/lease files
     # stay in place; the previous tree is kept under .backups/safety-ID.
@@ -2197,6 +2215,12 @@ def wb_apply_pending(data_dir: str) -> dict[str, any] {
 }
 
 def wb_remove_job(data_dir: str, id: any) {
+    with _restore_lock {
+        _wb_remove_job_locked(data_dir, id);
+    }
+}
+
+def _wb_remove_job_locked(data_dir: str, id: any) {
     # Delete only an unreferenced upload/export/staging job, never a safety
     # copy or a job a pending restore or its latest receipt still needs.
     path = _job_path(data_dir, id);
