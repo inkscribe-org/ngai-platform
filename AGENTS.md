@@ -159,7 +159,20 @@ Learned during the phase-0 spike (`jac/spike/`); keep updated as we hit more:
     tuple unpacking `a, b = f()` is a parse error (index instead);
     `os.killpg(pid, sig)` fails E1053 on the int param (route the
     int through a nested def); reserved words beyond the documented
-    set: `entry`, `own`, `obj`, `root`.
+    set: `entry`, `own`, `obj`, `root`, `case`, `override`.
+- `jac/harness/driver_codex.jac` (+ `_support`) ports the codex adapter
+  (kind `codex`): app-server JSON-RPC, approvals/questions, steer,
+  protocol interrupt → kill escalation, retries, resume recovery. One
+  reader thread per app-server handles lines in order; the handshake runs
+  on its own thread with blocking `_request`s. Settle arms completion only
+  after asks resolve, and a losing `complete()` waits for the winner's
+  `turn.completed`, so Stop never resolves ahead of its own events (the TS
+  event loop's ordering). Account state stays node-side:
+  `ProviderInstance.prepareJacTurn` (codex: plan generation checks +
+  token) rides the turn as `_jac`; snapshot answers 501 and the shim
+  falls back to the TS snapshot. `driver_codex.test.jac` drives the real
+  `server/testing/fake-codex-app-server.ts`; run `jac test` with
+  `TMPDIR=~/.cache/jac/tmp` (the embedded Postgres socket dir).
 ## 8. Porting a phase-4 subsystem (recipe, from webhooks 2026-10-10)
 
 Webhooks (`jac/harness/webhooks.jac` + `server/jac-webhooks.ts`) is the

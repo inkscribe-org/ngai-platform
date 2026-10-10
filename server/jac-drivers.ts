@@ -135,6 +135,9 @@ function makeInstance(inner: ProviderInstance, instanceId: string): ProviderInst
       try {
         return await driverOp<ProviderSnapshot>("snapshot", { instance_id: instanceId });
       } catch (error) {
+        // 501: this kind keeps its snapshot (version/login probes, account
+        // identity) node-side — the declarative half answers.
+        if ((error as DriverError).status === 501) return inner.snapshot();
         console.error(`jac-drivers: snapshot ${instanceId}:`, error instanceof Error ? error.message : String(error));
         return inner.snapshot();
       }
@@ -143,9 +146,12 @@ function makeInstance(inner: ProviderInstance, instanceId: string): ProviderInst
       ...adapter,
       sendTurn: async (turn: SendTurnInput): Promise<TurnStartResult> => {
         try {
+          // Node-held account state (sign-in generation, plan token) is
+          // checked here; the context rides the turn as `_jac`.
+          const context = inner.prepareJacTurn ? await inner.prepareJacTurn(turn) : undefined;
           const result = await driverOp<{ turn_id?: string; turnId?: string }>("send_turn", {
             instance_id: instanceId,
-            turn,
+            turn: context && Object.keys(context).length ? { ...turn, _jac: context } : turn,
           });
           const turnId = result.turnId ?? result.turn_id;
           if (typeof turnId !== "string" || !turnId) {
@@ -229,6 +235,11 @@ function makeInstance(inner: ProviderInstance, instanceId: string): ProviderInst
         console.error(`jac-drivers: dispose ${instanceId}:`, error instanceof Error ? error.message : String(error));
       } finally {
         forgetInstance(instanceId);
+        // The declarative half owns auth controllers (device sign-in, plan
+        // OAuth) with timers and child processes of their own.
+        await inner.dispose().catch((error) => {
+          console.error(`jac-drivers: inner dispose ${instanceId}:`, error instanceof Error ? error.message : String(error));
+        });
       }
     },
   };

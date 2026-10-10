@@ -1414,7 +1414,7 @@ def tool_detail_preview(value: any) -> any {
             if re.match(r"^data:[^,\s]+;base64,", item, re.I) { return "[binary content omitted]"; }
             # MCP frequently puts JSON inside text content: recover its field
             # names so short credentials get the same masking.
-            if re.match(r"^\s*[[{]", item) {
+            if re.match(r"^\s*[\[{]", item) {
                 try {
                     return bounded(json.loads(item), depth + 1);
                 } except Exception {

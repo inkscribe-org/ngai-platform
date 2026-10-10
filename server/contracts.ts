@@ -552,6 +552,12 @@ export interface ProviderInstance {
    * separate from generateText so the UI never infers a security capability
    * from a generic helper that may expose prompts in argv or lack approvals. */
   reviewPermission?(prompt: string, signal?: AbortSignal): Promise<string>;
+  /** Jac seam (server/jac-drivers.ts): node-owned preconditions for a turn
+   * the Jac harness will run — sign-in generation checks, catalog refresh,
+   * and per-turn credentials such as a ChatGPT-plan access token. Throws the
+   * same refusals sendTurn would; the returned record rides the turn to Jac
+   * as `_jac`. Only drivers with node-held account state implement it. */
+  prepareJacTurn?(turn: SendTurnInput): Promise<Record<string, unknown>>;
   dispose(): Promise<void>;
 }
 

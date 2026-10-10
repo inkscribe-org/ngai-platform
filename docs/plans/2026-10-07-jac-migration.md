@@ -264,6 +264,13 @@ core turn pipeline on the runtime.
   split without forking the stream; the emit bridge carries driver events
   into the existing broadcast path instead (same reasoning as routines'
   emit op).
+  Codex follow-up: `driver_codex.jac` (+`_support`) behind
+  `OMB_JAC_DRIVERS=codex`; the TS driver keeps config/catalog/auth/snapshot
+  and hands plan tokens over `prepareJacTurn`. 96 ported invariants green
+  against the TS suite's fake app-server; no codex golden corpus exists, so
+  parity is a verification-fixture A/B (TS vs Jac): identical canonical
+  event streams and transcripts for a two-turn run (incl. failed resume) and
+  an approval + Stop run; the fake app-server's parent is the jac process.
 - M4: long-tail subsystems on Jac; verify scripts green.
 - M5: `server/index.ts` deleted; companion + enterprise ported; single
   process again; plan closed out in `docs/verification/`.

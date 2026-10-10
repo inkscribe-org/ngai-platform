@@ -692,8 +692,10 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       createdAt: new Date().toISOString(),
     });
 
-    const sendTurn = async (turn: SendTurnInput) => {
-      turn = { ...turn, toolScope: assertToolScopeSupported(DRIVER_KIND, turn.toolScope) };
+    // Node-held account preconditions, shared by sendTurn and the Jac seam's
+    // prepareJacTurn: generation checks, the hosted refusal, the per-turn
+    // plan token and the plan catalog check.
+    const preparePlanTurn = async (turn: SendTurnInput): Promise<string | undefined> => {
       const generation = planGeneration;
       const assertPlanCurrent = () => {
         if (disposed) throw new Error("This provider was removed. Select a connected account and send again.");
@@ -711,6 +713,12 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         }
         mkdirSync(join(planDirectory, "codex"), { recursive: true, mode: 0o700 });
       }
+      return planToken;
+    };
+
+    const sendTurn = async (turn: SendTurnInput) => {
+      turn = { ...turn, toolScope: assertToolScopeSupported(DRIVER_KIND, turn.toolScope) };
+      const planToken = await preparePlanTurn(turn);
       if (config.managed) {
         // One blanket refusal hides which prerequisite broke; name it so the
         // person can fix the actual gap instead of reconnecting blind.
@@ -1903,6 +1911,11 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       } finally { planSigningOut = false; }
     },
     snapshot,
+    prepareJacTurn: async (turn) => {
+      assertToolScopeSupported(DRIVER_KIND, turn.toolScope);
+      const planToken = await preparePlanTurn(turn);
+      return planToken ? { planToken } : {};
+    },
     adapter: {
       provider: DRIVER_KIND,
       capabilities: {

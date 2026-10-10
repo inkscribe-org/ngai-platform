@@ -444,3 +444,10 @@ glob mcp_oauth_mark_needs_sign_in: any = _mcp_oauth_mark_needs_sign_in;
 glob mcp_oauth_with_sign_in: any = _mcp_oauth_with_sign_in;
 glob mcp_oauth_discover: any = _mcp_oauth_discover;
 glob mcp_oauth_dispose: any = _mcp_oauth_dispose;
+
+# --- codex driver (kind "codex") ---------------------------------------------
+# driver_codex registers into drivers._impls at import; the import alone is
+# the registration. Gate with OMB_JAC_DRIVERS=codex (or all).
+import from driver_codex {
+    _create as _codex_driver_create,
+}
