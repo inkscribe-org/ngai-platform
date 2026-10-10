@@ -139,7 +139,8 @@ jobs:
         run: pnpm broker:test && pnpm test:electron
 
   behavior-evals:
-    needs: static
+    # jac-warm: routines, computers and webhooks scenarios boot the harness.
+    needs: [static, jac-warm]
     if: needs.static.outputs.runtime == 'true'
     # The offline behavior-eval tiers (#1503): the evals' own vitest gate
     # (redaction, trace, golden replay), the tier-1 scenario runner, and the
@@ -158,6 +159,20 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Install jac 0.37.21
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/jaseci-labs/jaseci/main/scripts/install.sh | bash -s -- --version 0.37.21
+          jac --version
+      - name: Pin harness file mtimes
+        # jac keys its compile cache on every jac/harness file's mtime+size;
+        # a fresh checkout's mtimes would miss a restored cache every time.
+        run: find jac/harness -exec touch -h -d '2000-01-01T00:00:00Z' {} +
+      - name: Restore the warm Jac harness compile
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: jac/harness/.jac
+          key: ${{ needs.jac-warm.outputs.cache_key }}
+          fail-on-cache-miss: true
       - name: Eval suite typecheck (standalone tsconfig)
         # The root typecheck builds src and server only; evals carries its
         # own tsconfig, so its type gate runs here with the rest of the
