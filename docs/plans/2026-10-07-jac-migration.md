@@ -47,7 +47,7 @@ stay TS, talking the same wire contract.
 | `server/` harness (routes, SSE, drivers, broker, computers, connectors, routines, memory, webhooks, backups, TTS) | **Jac** | The actual product logic; OSP fits (see model below) |
 | `companion/` relay (~40 files) | **Jac** (phase 5) | Small; same stack, same wire |
 | `enterprise/` server (6 files) | **Jac** (phase 5, with server) | License routes touch the same store |
-| `shared/` wire contracts | **Stays zod/TS as source of truth** (see contract section) | Single source of truth for both sides |
+| `shared/` wire contracts | **Replaced by Jac `obj` types** (decided 2026-10-10: Jac only, no zod); TS consumers get generated types | One definition, in Jac |
 | `src/` React client | **Jac `cl`** — phase 6, committed | Jac compiles JSX→React/Vite; `has`→`useState`, `can entry`→`useEffect`, npm deps declared in `jac.toml`. A rewrite per component subtree, not a transform; talks the wire contract until cutover, then Jac RPC |
 | `electron/` shells | **Replaced by the Jac desktop build** (decided 2026-10-10) | The app ships as a Jac build output; Electron main/preload and the esbuild-bundled node server are retired with M5/M6. Build target still to choose — see open decision 7 |
 | Hosted tier: `boat*`, `cloud-*`, `vps-*`, `hosted-*`, `lending-*`; fleet/tailscale/tunnel; voice/live-call/phone/TTS | **Deferred — stays on the TS harness or is re-scoped when needed** | Not core to the Jac port; ~13k LOC of impl the migration deliberately does not carry first |
@@ -152,14 +152,16 @@ core turn pipeline on the runtime.
 
 ## Wire contract
 
-- `shared/` zod schemas remain the **single source of truth**. Emit JSON
-  Schema from them (`zod-to-json-schema`); the Jac side validates payloads
-  against the emitted schemas in CI.
+- ~~`shared/` zod schemas remain the single source of truth~~ **Superseded
+  2026-10-10: Jac only, no zod.** The wire contract is Jac `obj`/enum types
+  (impl plan E0); remaining TS consumers (the transitional React client,
+  Cloudflare Workers, docs) use TS generated from them; `shared/` zod is
+  retired area by area and `zod` removed at H3.
 - A conformance job runs both processes against the same recorded
   request/event corpus and diffs responses and SSE topic output. This job is
   the migration's safety net and stays until phase 5 deletes one process.
-- Revisit "Jac models as source → generate TS" only if/when jaclang grows
-  codegen; not a dependency of this plan.
+- Jac → TS generation: our own small generator until jaclang offers codegen
+  (to be filed upstream).
 
 ## Packaging and CI impact
 
@@ -211,7 +213,7 @@ core turn pipeline on the runtime.
 | --- | --- |
 | jaclang runtime gaps (SSE, subprocess streaming, long-lived process) | Phase 0 go/no-go; upstream-fix policy; no routing around |
 | Two processes, one state dir | Seam rules above; the existing `acquireDataDirLeaseForProcess` gets a Jac-side equivalent; conformance job |
-| Wire drift between zod and Jac validation | Emitted-schema validation in CI, both sides |
+| Wire drift between Jac types and the TS consumers | TS generated from the Jac wire types in CI; no hand-written copies |
 | Desktop app as a Jac build: target maturity and platform coverage (no jac 0.37 for Windows / Intel macOS) | Pick the target (open decision 7) and spike it against the Electron capability list above before M5; drive missing platforms upstream |
 | Upstream-fix flood early on | Expected and budgeted; defect table below is the ledger |
 | Node→Python hot-path throughput on driver event fanout | Chat-scale, not high-frequency trading; measure in phase 3 against golden corpora before cutover |
@@ -236,8 +238,8 @@ core turn pipeline on the runtime.
 3. **First live slice**: routines (phase 2) — **recommended** as first
    client-visible traffic, after the phase-1 data layer; vs full chat-turn
    vertical first (higher stall risk on runtime gaps).
-4. **Contract direction**: zod-as-source + emitted JSON Schema —
-   **recommended**; vs Jac-as-source codegen (premature).
+4. ~~Contract direction~~ **decided 2026-10-10: Jac only, no zod** — Jac
+   `obj` types are the wire source; TS consumers get generated types.
 5. **First drivers**: claude + openai-chat (the two parsing extremes) —
    **recommended**; port further drivers only if observed in real use.
 6. ~~Client migration~~ **decided 2026-10-07**: `src/` ports to Jac `cl`

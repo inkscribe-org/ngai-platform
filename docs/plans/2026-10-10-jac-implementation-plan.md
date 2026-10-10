@@ -210,8 +210,9 @@ stdio proxies.
    helper names must not shadow base defs; a checker error in a test annex
    breaks `jac run`. Until upstream decides on test annexes at boot
    (profiling: 56 % of compile time), keep annexes lean.
-5. **Errors:** `common.fail(status, msg)`; zod messages reproduced
-   faithfully where the client displays them.
+5. **Errors:** `common.fail(status, msg)`; validation messages the client
+   displays keep today's text (originally zod's) for parity — produced by
+   Jac validation, not zod.
 6. **Concurrency:** sv `def:pub`s run on an 8-thread pool; module state
    touched from more than one endpoint or thread is locked
    (`threading.RLock`) — see the review commit list for the pattern.
@@ -929,14 +930,19 @@ Common to every C workstream:
   (`[dependencies.npm]`): react-markdown, remark-gfm/math, rehype-katex,
   katex, shiki, mermaid, @tanstack/react-virtual, @novnc/novnc,
   lucide-react, qrcode.react, papaparse, posthog-js, clsx, tailwind-merge,
-  zod (wire), yaml. Tailwind v4 via `[client.vite] plugins`.
+  yaml (no zod — wire types are Jac `obj`s). Tailwind v4 via
+  `[client.vite] plugins`.
 - **i18n:** no built-in facility; port `src/lib/i18n.ts` (84 LOC, hand
   written) as-is + the 10 catalogs and `generate-locale.mjs --check`.
-- **Wire:** keep the `ServerFrame` union and route shapes. **Source of
-  truth (proposed, §17):** during the overlap `shared/` zod stays the
-  source with emitted JSON Schema validated Jac-side; at cutover (H3) Jac
-  `obj` types become the source and the Cloudflare Workers get a generated
-  TS copy.
+- **Wire (decided 2026-10-10: Jac only, no zod):** the wire contract —
+  `ServerFrame` union, request/response shapes, package/backup formats —
+  is defined once as Jac `obj`/enum types in `app/core/wire/`, validated
+  in Jac. No zod schemas are kept or added. Remaining TS consumers (the
+  React client during the overlap, the Cloudflare Workers, `apps/docs`)
+  get **generated** TS types from the Jac definitions — a small generator
+  in `scripts/` (Jac type → `.d.ts`) until jaclang offers codegen (file
+  upstream). `shared/*.ts` zod files are replaced area by area as their
+  Jac `obj` lands, and `zod` leaves `package.json` at H3.
 - **Live events:** port `src/lib/live-events.ts` (395) onto the A4 reader.
 - **api():** replace the `fetch` wrapper (~300 call sites) with typed RPC
   stubs as each endpoint lands in Jac; keep a raw-fetch shim meanwhile.
@@ -1136,7 +1142,8 @@ inventory; upstream issue numbers in §14):
   — A6). Keep only what the Windows/Intel-mac bridge release (F4) needs,
   on a release branch, until WS-U1 ships.
 - H3: delete `src/`, the node build (`bundle-server.mjs`, tsconfig.server),
-  and node-only tests; `shared/` keeps only what Workers/docs need.
+  and node-only tests; `shared/` is deleted — the Workers and docs consume
+  TS generated from the Jac wire types; `zod` is removed.
 - H4: CI rewrite: Jac app build + `jac test` + UI e2e against the app;
   drop vitest shards for deleted code; keep `cloudflare/` Workers and
   `apps/docs` jobs (they stay TS per the migration plan).
@@ -1325,8 +1332,9 @@ E2–E9 (per area); D3 fallback (3) node scripts → D3.
    (fixes the dict-slot narrowing quirk and likely the stringified-default
    defect; fixes for #9959/#9944/#9946 will only land on newer versions;
    costs a full re-verification).
-6. **Wire source of truth** — proposed: `shared/` zod during the overlap,
-   Jac `obj` types at cutover with a generated TS copy for the Workers.
+6. ~~Wire source of truth~~ **decided 2026-10-10: Jac only, no zod.** Jac
+   `obj` types are the single definition; TS consumers get generated
+   types (E0).
 7. **Node for engines** (A3) — require the user's node, managed download,
    or bundle.
 8. **Roots/principals** (A2(h)) — proposed: one workspace root, access
