@@ -1,19 +1,24 @@
 // Advertisement filtering for the connector MCP bridge (issue #1737, part
-// of the per-bot Composio tool grants umbrella #1734).
+// of the per-bot Composio tool grants umbrella #1734) — the bridge half.
 //
-// Call-time enforcement (connector-verdict.ts, slice 2) stays the
-// authority: it judges the real tool names on the harness relay endpoint,
-// where the loopback token already names the bot. This module is surface
-// only — it trims a tools/list response to the tools the bot was granted,
-// so the model is never offered a call that would be refused a moment
-// later. The allowlist reaches the bridge as JSON in the environment, the
-// same channel every other bridge input uses; whenever filtering cannot
-// run — no env var, malformed env, oversized payload — the bridge relays
-// the list untouched and the grants stay enforced at call time.
+// Call-time enforcement (jac/harness/connectors.jac, the grants verdict)
+// stays the authority: it judges the real tool names on the harness relay
+// endpoint, where the loopback token already names the bot. This module is
+// surface only — it trims a tools/list response to the tools the bot was
+// granted, so the model is never offered a call that would be refused a
+// moment later. The harness serializes the allowlist into the bridge's
+// environment (connectors.jac `mcp_integration`); whenever filtering cannot
+// run — no env var, malformed env, oversized payload — the bridge relays the
+// list untouched and the grants stay enforced at call time.
+//
+// Only connector-proxy.ts imports this: the bridge is a stdio process the
+// provider CLIs spawn per turn, so it stays node (phase 4 of the Jac
+// migration moved the harness half — serialization and the verdict — to
+// Jac). The two slug resolvers below are the bridge's own copies of the
+// verdict's; jac/harness/connectors.jac carries the authoritative pair.
 import { CONNECTOR_SLUG_PATTERN, CONNECTOR_TOOL_NAME_PATTERN, type ConnectorToolGrant } from "../shared/wire.ts";
-import { serviceSlugFor, serviceSlugForCandidates } from "./connector-verdict.ts";
 
-/** The env var mcpIntegration sets and connector-proxy.ts reads. */
+/** The env var the harness sets and connector-proxy.ts reads. */
 export const CONNECTOR_ALLOWED_TOOLS_ENV = "OMB_CONNECTOR_ALLOWED_TOOLS";
 
 /** The env var carrying the connected-service slugs the filter resolves
@@ -21,19 +26,10 @@ export const CONNECTOR_ALLOWED_TOOLS_ENV = "OMB_CONNECTOR_ALLOWED_TOOLS";
  * plain first-segment split, exactly as when the catalog is unreachable. */
 export const CONNECTOR_SERVICE_SLUGS_ENV = "OMB_CONNECTOR_SERVICE_SLUGS";
 
-/** Upper bound for the serialized allowlist. Past it the env var is
- * omitted entirely (mounting must never depend on catalog size) and the
- * bot keeps the unfiltered list with call-time enforcement only. */
-export const CONNECTOR_ALLOWED_TOOLS_MAX_BYTES = 32 * 1024;
-
-/** Upper bound for the serialized slug list; past it the env var is
- * omitted and the filter falls back to the plain split. */
-export const CONNECTOR_SERVICE_SLUGS_MAX_BYTES = 32 * 1024;
-
 /** The platform meta-tools. They name no connected-app tool themselves —
  * search and schemas discover, the executor runs what it is told — so
  * they stay advertised whenever any tool is granted; the executor's
- * arguments are still judged call-time by connector-verdict.ts. */
+ * arguments are still judged call-time by the harness verdict. */
 export const CONNECTOR_META_TOOLS: readonly string[] = [
   "COMPOSIO_SEARCH_TOOLS",
   "COMPOSIO_GET_TOOL_SCHEMAS",
@@ -51,27 +47,23 @@ export const CONNECTOR_META_TOOLS: readonly string[] = [
 
 const CONNECTION_TOOL_SUFFIXES = ["_MANAGE_CONNECTIONS", "_WAIT_FOR_CONNECTIONS"];
 
-/** Harness side: serialize a grants record for the bridge env, or report
- * that it exceeded the cap (the caller warns and omits it). */
-export function serializeConnectorAllowedTools(
-  grants: Record<string, ConnectorToolGrant>,
-): { env?: string; oversized: boolean } {
-  const env = JSON.stringify(grants);
-  if (Buffer.byteLength(env, "utf8") > CONNECTOR_ALLOWED_TOOLS_MAX_BYTES) return { oversized: true };
-  return { env, oversized: false };
+/** GMAIL_SEND_EMAIL → gmail; a name with no underscore names no service. */
+function serviceSlugFor(tool: string): string | null {
+  const underscore = tool.indexOf("_");
+  if (underscore <= 0) return null;
+  return tool.slice(0, underscore).toLowerCase();
 }
 
-/** Harness side: serialize the connected-service slugs for the bridge
- * env, or report that they exceeded the cap. Duplicate or non-slug
- * entries are dropped rather than failing the whole mount. */
-export function serializeConnectorServiceSlugs(
-  slugs: readonly string[],
-): { env?: string; oversized: boolean } {
-  const unique = [...new Set(slugs.filter((slug) => CONNECTOR_SLUG_PATTERN.test(slug)))];
-  if (!unique.length) return { oversized: false };
-  const env = JSON.stringify(unique);
-  if (Buffer.byteLength(env, "utf8") > CONNECTOR_SERVICE_SLUGS_MAX_BYTES) return { oversized: true };
-  return { env, oversized: false };
+/** The longest known slug whose upper-snake form prefixes the name
+ * (bland_ai over bland); null leaves the plain-split fallback. */
+function serviceSlugForCandidates(tool: string, candidates: readonly string[]): string | null {
+  let match: string | null = null;
+  for (const candidate of candidates) {
+    if (tool.startsWith(candidate.toUpperCase() + "_") && (match === null || candidate.length > match.length)) {
+      match = candidate;
+    }
+  }
+  return match;
 }
 
 /** Bridge side: decode and shape-check the allowlist env. Anything off —
@@ -126,8 +118,8 @@ export function parseConnectorServiceSlugsEnv(raw: string | undefined): readonly
 /** Whether one advertised tool name survives the filter. A tool is
  * offered when its service is granted with `"*`", when its exact name is
  * granted, or when it is that service's connection flow — a card the
- * person approves, which slice 2 passes through at call time and which a
- * bot granted a service should still be able to offer for another
+ * person approves, which the verdict passes through at call time and which
+ * a bot granted a service should still be able to offer for another
  * account. */
 export function connectorToolAdvertised(
   name: string,

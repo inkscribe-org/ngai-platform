@@ -1,33 +1,28 @@
 import { describe, expect, it } from "vitest";
 import {
-  CONNECTOR_ALLOWED_TOOLS_MAX_BYTES,
   connectorToolAdvertised,
   filterToolsListFrame,
   parseConnectorAllowedToolsEnv,
-  serializeConnectorAllowedTools,
+  parseConnectorServiceSlugsEnv,
 } from "./connector-advertisement.ts";
 import type { ConnectorToolGrant } from "../shared/wire.ts";
 
 const grants = (value: Record<string, ConnectorToolGrant>) => value;
 
+// The harness half (serialization and its 32 KB caps) moved to
+// jac/harness/connectors.jac with its tests; these cover what the bridge
+// decodes and filters.
 describe("connector advertisement allowlist env", () => {
-  it("round-trips a grants record through serialize and parse", () => {
+  it("reads back a grants record the harness serialized", () => {
     const record = grants({ gmail: { tools: ["GMAIL_SEND_EMAIL", "GMAIL_GET_EMAIL"] }, slack: { tools: "*" } });
-    const { env, oversized } = serializeConnectorAllowedTools(record);
-    expect(oversized).toBe(false);
-    expect(parseConnectorAllowedToolsEnv(env)).toEqual(record);
+    expect(parseConnectorAllowedToolsEnv(JSON.stringify(record))).toEqual(record);
   });
 
-  it("flags an allowlist past the 32 KB cap instead of truncating it", () => {
-    // 500 names near the 128-character pattern ceiling: past the cap with
-    // one service, well inside the store's own per-service bound.
-    const names = Array.from({ length: 500 }, (_, index) => "GMAIL_TOOL_" + String(index).padStart(3, "0") + "_WITH_" + "A_LONG_DESCRIPTOR_".repeat(6));
-    const { env, oversized } = serializeConnectorAllowedTools(grants({ gmail: { tools: names } }));
-    expect(oversized).toBe(true);
-    expect(env).toBeUndefined();
-    expect(Buffer.byteLength(JSON.stringify({ gmail: { tools: names } }), "utf8")).toBeGreaterThan(
-      CONNECTOR_ALLOWED_TOOLS_MAX_BYTES,
-    );
+  it("reads the service slug list, and an unreadable one as empty", () => {
+    expect(parseConnectorServiceSlugsEnv(JSON.stringify(["bland_ai", "bland"]))).toEqual(["bland_ai", "bland"]);
+    expect(parseConnectorServiceSlugsEnv(undefined)).toEqual([]);
+    expect(parseConnectorServiceSlugsEnv("{not json")).toEqual([]);
+    expect(parseConnectorServiceSlugsEnv(JSON.stringify(["bland_ai", "Bad Slug"]))).toEqual([]);
   });
 
   it("parses an empty record (no tools granted) but treats anything unreadable as absent", () => {

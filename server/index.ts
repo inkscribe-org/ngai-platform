@@ -122,8 +122,7 @@ import {
   cloudBackendChangeError,
   vpsAliasResourceChangeError,
 } from "./cloud-backend.ts";
-import * as composio from "./composio.ts";
-import { connectorCallFromFrame, connectorRefusalText, connectorUnrecognizedText, evaluateConnectorTools } from "./connector-verdict.ts";
+import * as composio from "./jac-connectors.ts";
 import { connectorCardText } from "./connector-card-text.ts";
 import { chiefOfStaffSystemPrompt } from "./chief-of-staff.ts";
 import { buildRecall } from "./recall.ts";
@@ -640,7 +639,6 @@ import { localDesktopTarget, localVmViewerStatus, viewerTargetId } from "./deskt
 import { createAntigravityLeftoverRoutes } from "./routes/antigravity-leftovers.ts";
 import { findAntigravityLeftovers, removeAntigravityLeftovers } from "./drivers/antigravity-temp.ts";
 import { createLiveRoutes } from "./routes/live.ts";
-import { withScopeHint } from "./connector-scope-hint.ts";
 
 const PORT = Number(process.env.OMB_PORT || process.env.OGB_PORT || 8799);
 const WEBHOOK_PORT = Number(process.env.OMB_WEBHOOK_PORT || PORT + 1);
@@ -11338,6 +11336,19 @@ const routineBridgeOps: Record<string, (payload: BridgePayload) => unknown> = {
     if (!forceNew && existing) return { threadId: existing };
     return { threadId: store.createTask(bridgeString(payload.botId), "Updates", false)?.threadId ?? null };
   },
+  // Connected apps (jac/harness/connectors.jac) recreated the Composio
+  // Session: keep its non-secret ids so an edited config/env setup does
+  // not recreate it every launch.
+  composio_persist: (payload) => {
+    const userId = bridgeString(field(payload, "userId", "user_id"));
+    const sessionId = bridgeString(field(payload, "sessionId", "session_id"));
+    if (!userId || !sessionId) return { ok: false, error: "composio_persist needs user_id and session_id" };
+    cfg.composio ??= {};
+    cfg.composio.userId = userId;
+    cfg.composio.sessionId = sessionId;
+    saveConfig({ composio: { userId, sessionId } });
+    return { ok: true };
+  },
   // Drivers in the Jac harness emit RuntimeEvents through this op; the shim
   // adapter's listeners (the EventBus attach) see them exactly as an
   // in-process adapter's events.
@@ -18898,7 +18909,14 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         // behavior; a grants record makes every unrecognized shape a deny.
         // Rows are fire-and-forget: a log failure must never take the call
         // (or its refusal) down with it.
-        const call = connectorCallFromFrame(body);
+        const { call, refusal: unrecognizedRefusal } = await composio.connectorCallFromFrame(body);
+        // Classification is a harness round trip: re-read the live bot so a
+        // switch-off that landed meanwhile still wins.
+        requireActiveInternalCapability();
+        currentSender = store.bot(internalCapability.botId);
+        if (!currentSender || currentSender.composio === false || !composio.configured(cfg)) {
+          return json(res, 403, { error: "connected apps are not enabled for this bot" });
+        }
         let serviceSlugs: readonly string[] = [];
         // A bot with no grants record keeps the pre-grants relay: even an
         // unreadable frame passes through exactly as it always did.
@@ -18913,12 +18931,11 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
             source: "connector-scope",
             rule: "connectorTools",
           });
-          const refusal = connectorUnrecognizedText(call.invoked, call.reason);
           res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
           return res.end(JSON.stringify({
             jsonrpc: "2.0",
             id: (body as { id?: unknown }).id ?? null,
-            result: { content: [{ type: "text", text: refusal }], isError: true },
+            result: { content: [{ type: "text", text: unrecognizedRefusal ?? "" }], isError: true },
           }));
         }
         if (call.kind === "tools") {
@@ -18930,7 +18947,21 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
           requireActiveInternalCapability();
           currentSender = store.bot(internalCapability.botId);
           if (!currentSender || currentSender.composio === false || !composio.configured(cfg)) return json(res, 403, { error: "connected apps are no longer enabled for this bot" });
-          const verdict = evaluateConnectorTools(call.names, currentSender.connectorTools, serviceSlugs);
+          const judgedGrants = currentSender.connectorTools;
+          const verdict = await composio.evaluateConnectorTools(call.names, judgedGrants, serviceSlugs);
+          requireActiveInternalCapability();
+          currentSender = store.bot(internalCapability.botId);
+          if (!currentSender || currentSender.composio === false || !composio.configured(cfg)) return json(res, 403, { error: "connected apps are no longer enabled for this bot" });
+          // The verdict judged the grants as read before its round trip; a
+          // grants edit that landed meanwhile is refused, never guessed at.
+          if (JSON.stringify(currentSender.connectorTools) !== JSON.stringify(judgedGrants)) {
+            res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
+            return res.end(JSON.stringify({
+              jsonrpc: "2.0",
+              id: (body as { id?: unknown }).id ?? null,
+              result: { content: [{ type: "text", text: "This bot's connected-app permissions changed. The call was not run." }], isError: true },
+            }));
+          }
           if (!verdict.allowed) {
             for (const denial of verdict.denials) {
               appendDecision(DATA_DIR, {
@@ -18948,12 +18979,11 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
                 rule: denial.service ? "connectorTools." + denial.service : "connectorTools",
               });
             }
-            const refusal = connectorRefusalText(verdict.denials);
             res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
             return res.end(JSON.stringify({
               jsonrpc: "2.0",
               id: (body as { id?: unknown }).id ?? null,
-              result: { content: [{ type: "text", text: refusal }], isError: true },
+              result: { content: [{ type: "text", text: verdict.refusal ?? "" }], isError: true },
             }));
           }
           // One row per allowed call, naming the first target: the audit
@@ -19109,13 +19139,21 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
           Array.isArray(req.headers["mcp-session-id"])
             ? req.headers["mcp-session-id"][0]
             : req.headers["mcp-session-id"],
-          () => {
+          async () => {
+            // The grants verdict is a harness round trip, so it runs first on
+            // the grants as they stand now; everything after it is
+            // synchronous up to dispatch, and a grants edit landing in
+            // between is caught by comparing what was judged.
+            const judged = store.bot(internalCapability.botId)?.connectorTools;
+            const freshVerdict = call.kind === "tools"
+              ? await composio.evaluateConnectorTools(call.names, judged, serviceSlugs)
+              : null;
             requireActiveInternalCapability();
             const fresh = store.bot(internalCapability.botId);
             if (!fresh || fresh.composio === false || !composio.configured(cfg)) refuseDispatch("Connected apps were disabled while this call waited.");
             const freshAccess = connectorAccessDecision(fresh.connectorScopes, connectorCalls, serviceSlugs);
             if (!freshAccess.ok || (opaque && fresh.connectorTools !== undefined) ||
-                (call.kind === "tools" && !evaluateConnectorTools(call.names, fresh.connectorTools, serviceSlugs).allowed) ||
+                (call.kind === "tools" && (!freshVerdict?.allowed || JSON.stringify(fresh.connectorTools) !== JSON.stringify(judged))) ||
                 (call.kind === "unrecognized" && fresh.connectorTools !== undefined)) {
               refuseDispatch("This bot's connected-app permissions changed. The call was not run.");
             }
@@ -19133,6 +19171,9 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
               }
             }
           },
+          // A missing OAuth permission gets a note on what fixes it
+          // (MOCA-273); the harness adds it to the relayed body.
+          connectorCalls.map((call) => call.slug),
         ); } catch (error) {
           if (dispatchRefusal) return refuseOutbound(dispatchRefusal);
           throw error;
@@ -19143,8 +19184,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         };
         if (upstream.transportSessionId) headers["mcp-session-id"] = upstream.transportSessionId;
         res.writeHead(upstream.status, headers);
-        // A missing OAuth permission gets a note on what fixes it (MOCA-273).
-        return res.end(Buffer.from(withScopeHint(upstream.bytes, upstream.contentType, connectorCalls.map((call) => call.slug))));
+        return res.end(Buffer.from(upstream.bytes));
       }
       // ── computer control: proxies read the hold, bots plead for help ──
       if (path === "/api/internal/computer-control") {
@@ -19198,7 +19238,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
           const row = raw as { slug?: unknown; toolkit?: unknown; alias?: unknown; account?: unknown };
           const slug = typeof row.slug === "string" ? row.slug : typeof row.toolkit === "string" ? row.toolkit : undefined;
           if (!slug || !CONNECTOR_SLUG.test(slug.toLowerCase())) continue;
-          const alias = composio.normalizeAccountAlias((row.alias ?? row.account) as string | undefined);
+          const alias = await composio.normalizeAccountAlias((row.alias ?? row.account) as string | undefined);
           items.push({ slug: slug.toLowerCase(), ...(alias ? { alias } : {}) });
         }
         const slugs = [...new Set(items.map((item) => item.slug))];
@@ -25145,7 +25185,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
           services: {},
         });
       }
-      const status = await composio.connectionStatus(cfg, services.length ? services : composio.CURATED_SLUGS);
+      const status = await composio.connectionStatus(cfg, services.length ? services : null);
       return json(res, 200, { configured: true, services: status });
     }
     m = path.match(/^\/api\/connectors\/([\w-]+)\/authorize$/);
@@ -25681,6 +25721,9 @@ server.listen(PORT, "127.0.0.1", async () => {
   // client request is accepted.
   const jacUrl = await startJacRoutines();
   if (jacUrl) await webhooks.start().catch((error) => console.error(`webhooks: mirror load failed: ${error instanceof Error ? error.message : String(error)}`));
+  // Connected apps: the sync connection-mode mirror needs the harness's
+  // reading of the env broker before turns ask whether apps are configured.
+  if (jacUrl) await composio.start().catch((error) => console.error(`connected apps: state load failed: ${error instanceof Error ? error.message : String(error)}`));
   // The library reads routine state through the synchronous mirror, so it
   // initializes whether or not the harness answered — an empty mirror is
   // its cold-start truth either way.

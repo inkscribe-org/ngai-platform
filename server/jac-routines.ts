@@ -244,7 +244,7 @@ interface JacFailureEnvelope {
   error?: string;
 }
 
-async function jacOpRaw(name: string, args: Record<string, unknown>): Promise<unknown> {
+async function jacOpRaw(name: string, args: Record<string, unknown>, timeoutMs = OP_TIMEOUT_MS): Promise<unknown> {
   const url = jacUrl ?? (await ensureJacHarness());
   if (!url) throw Object.assign(new Error("routines unavailable"), { status: 503 });
   let response: Response;
@@ -253,7 +253,7 @@ async function jacOpRaw(name: string, args: Record<string, unknown>): Promise<un
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ omb_token: jacBridgeToken(), ...args }),
-      signal: AbortSignal.timeout(OP_TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (error) {
     throw Object.assign(
@@ -291,6 +291,19 @@ export function jacOp<T = unknown>(name: string, args: Record<string, unknown> =
   // A failed op must not poison the chain; the caller still sees it.
   opChain = call.then(() => undefined, () => undefined);
   return call;
+}
+
+/** An op outside the serialized chain, for subsystems with no ordering
+ * contract against routines and with slow upstream I/O (connected apps
+ * relay a tool call for up to 10 minutes; queued behind it, every routine
+ * op would stall). The harness serves sync defs on worker threads, so
+ * these run concurrently there too. */
+export function jacOpUnordered<T = unknown>(
+  name: string,
+  args: Record<string, unknown> = {},
+  timeoutMs = OP_TIMEOUT_MS,
+): Promise<T> {
+  return jacOpRaw(name, args, timeoutMs) as Promise<T>;
 }
 
 // ── read mirror ──────────────────────────────────────────────────────────

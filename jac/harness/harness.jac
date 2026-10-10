@@ -372,3 +372,45 @@ glob webhook_receive: any = _webhooks_webhook_receive;
 glob webhook_authorize: any = _webhooks_webhook_authorize;
 glob webhook_test: any = _webhooks_webhook_test;
 glob webhook_record_rejected: any = _webhooks_webhook_record_rejected;
+
+# --- connectors (connected apps / Composio) module HTTP surface -------------
+import from connectors {
+    connectors_state as _connectors_state,
+    connectors_set_broker_access as _connectors_set_broker_access,
+    connectors_prepare_project_session as _connectors_prepare_project_session,
+    connectors_mcp_integration as _connectors_mcp_integration,
+    connectors_relay_target as _connectors_relay_target,
+    connectors_relay_send as _connectors_relay_send,
+    connectors_connected_services as _connectors_connected_services,
+    connectors_connected_service_slugs as _connectors_connected_service_slugs,
+    connectors_validate_grants as _connectors_validate_grants,
+    connectors_list_tools as _connectors_list_tools,
+    connectors_connection_status as _connectors_connection_status,
+    connectors_remove_service as _connectors_remove_service,
+    connectors_remove_account as _connectors_remove_account,
+    connectors_authorize as _connectors_authorize,
+    connectors_list_toolkits as _connectors_list_toolkits,
+    connectors_toolkit_card as _connectors_toolkit_card,
+    connectors_normalize_alias as _connectors_normalize_alias,
+    connectors_classify_call as _connectors_classify_call,
+    connectors_evaluate as _connectors_evaluate,
+}
+glob connectors_state: any = _connectors_state;
+glob connectors_set_broker_access: any = _connectors_set_broker_access;
+glob connectors_prepare_project_session: any = _connectors_prepare_project_session;
+glob connectors_mcp_integration: any = _connectors_mcp_integration;
+glob connectors_relay_target: any = _connectors_relay_target;
+glob connectors_relay_send: any = _connectors_relay_send;
+glob connectors_connected_services: any = _connectors_connected_services;
+glob connectors_connected_service_slugs: any = _connectors_connected_service_slugs;
+glob connectors_validate_grants: any = _connectors_validate_grants;
+glob connectors_list_tools: any = _connectors_list_tools;
+glob connectors_connection_status: any = _connectors_connection_status;
+glob connectors_remove_service: any = _connectors_remove_service;
+glob connectors_remove_account: any = _connectors_remove_account;
+glob connectors_authorize: any = _connectors_authorize;
+glob connectors_list_toolkits: any = _connectors_list_toolkits;
+glob connectors_toolkit_card: any = _connectors_toolkit_card;
+glob connectors_normalize_alias: any = _connectors_normalize_alias;
+glob connectors_classify_call: any = _connectors_classify_call;
+glob connectors_evaluate: any = _connectors_evaluate;
