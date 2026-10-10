@@ -86,7 +86,7 @@ export function jacDriverEvent(instanceId: string, event: RuntimeEvent): { ok: t
   mirrorEvent(instanceId, event);
   const listeners = listenersByInstance.get(instanceId);
   if (listeners) {
-    for (const listener of [...listeners]) {
+    for (const listener of Array.from(listeners)) {
       try {
         listener(event);
       } catch (error) {

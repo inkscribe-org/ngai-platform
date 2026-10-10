@@ -17,7 +17,7 @@ function makeNormalizer() {
   // UUID-k. A shared map would shift the second log by the first log's count.
   const uuidMap = new Map();
   let uuidCounter = 0;
-  function normalize(value, key) {
+  function normalize(value) {
     if (typeof value === "string") {
       if (UUID_RE.test(value)) {
         if (!uuidMap.has(value)) uuidMap.set(value, `UUID-${uuidCounter++}`);
@@ -25,10 +25,10 @@ function makeNormalizer() {
       }
       return value;
     }
-    if (Array.isArray(value)) return value.map((v) => normalize(v, key));
+    if (Array.isArray(value)) return value.map((v) => normalize(v));
     if (value && typeof value === "object") {
       const out = {};
-      for (const [k, v] of Object.entries(value)) out[k] = normalize(v, k);
+      for (const [k, v] of Object.entries(value)) out[k] = normalize(v);
       return out;
     }
     return value;

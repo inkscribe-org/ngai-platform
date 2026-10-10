@@ -141,7 +141,7 @@ async function op<T>(name: string, args: Record<string, unknown>, timeoutMs = OP
     return await jacOpUnordered<T>(`connectors_${name}`, explicit, timeoutMs);
   } catch (error) {
     // jacOp names the routines harness; here the subsystem is connected apps.
-    if (error instanceof Error && /^routines unavailable/.test(error.message)) {
+    if (error instanceof Error && error.message.startsWith("routines unavailable")) {
       error.message = error.message.replace(/^routines unavailable/, "connected apps unavailable");
     }
     throw error;

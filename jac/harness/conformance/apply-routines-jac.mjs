@@ -87,7 +87,6 @@ function stubReply(op, call) {
 }
 
 // --- op transport -----------------------------------------------------------
-const endpointFor = (name) => `routine_${name.replace(/[A-Z]/g, (c) => "_" + c.toLowerCase())}`;
 
 async function jacOp(name, args) {
   const body = { omb_token: TOKEN, ...args };

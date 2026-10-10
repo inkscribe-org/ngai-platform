@@ -142,8 +142,8 @@ export function teamStoreCall(store: Store, payload: Record<string, unknown>): {
       // never one that existed when the import began.
       const bots = new Set(args.existingBotIds as string[]);
       const groups = new Set(args.existingGroupIds as string[]);
-      for (const group of [...store.groups]) if (!groups.has(group.id) && freshIds.has(group.id)) store.deleteGroup(group.id);
-      for (const bot of [...store.bots]) if (!bots.has(bot.id) && freshIds.has(bot.id)) store.deleteBot(bot.id);
+      for (const group of store.groups.slice()) if (!groups.has(group.id) && freshIds.has(group.id)) store.deleteGroup(group.id);
+      for (const bot of store.bots.slice()) if (!bots.has(bot.id) && freshIds.has(bot.id)) store.deleteBot(bot.id);
       for (const section of args.sections as string[]) {
         if (store.sections.includes(section)) store.changeEmptySection(section, null);
       }
