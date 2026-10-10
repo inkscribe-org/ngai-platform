@@ -3,7 +3,7 @@
 // everything declarative — driverKind, metadata, install descriptor, model
 // catalog, config decode — and replaces only `create()`: the returned
 // ProviderInstance forwards the whole ProviderAdapter surface over the
-// serialized `jacOp` queue (server/jac-routines.ts), exactly the transport
+// per-instance queue of unordered `jacOp` calls (server/jac-routines.ts), the transport
 // routines already use.
 //
 // Events flow the other way: driver code in Jac posts each RuntimeEvent to
@@ -15,7 +15,7 @@
 // in-process.
 //
 // Ordering: Jac's emit is synchronous HTTP per event, in emission order, so
-// listener order is preserved. Bridge handlers never re-enter jacOp
+// listener order is preserved. Bridge handlers never re-enter a node→Jac op
 // (jac-routines.ts deadlock rule); state the adapter must answer
 // synchronously (hasSession) lives in the mirror below, updated by events
 // before listeners see them — the same "mirror first" rule as routines.
@@ -40,7 +40,7 @@ import type {
   TextGenerationOptions,
   TurnStartResult,
 } from "./contracts.ts";
-import { jacEnabled, jacOp } from "./jac-routines.ts";
+import { jacEnabled, jacOpUnordered } from "./jac-routines.ts";
 
 /** Kinds the Jac harness should serve. Comma-separated; "all" opts in every
  * kind — Jac answers "unknown kind" for ones it doesn't implement yet. */
@@ -109,8 +109,27 @@ interface DriverError extends Error {
   code?: string;
 }
 
-async function driverOp<T>(op: string, args: Record<string, unknown>): Promise<T> {
-  return jacOp<T>(`driver_${op}`, args);
+// Driver ops are ordered per instance (send → steer → interrupt on one
+// engine must land in order), never on the global jacOp chain: interrupt
+// and dispose block on the Jac side while a CLI process tree is reaped
+// (seconds), and on the shared chain every routine/webhook op — and every
+// other engine — would queue behind that.
+const instanceChains = new Map<string, Promise<unknown>>();
+function driverOp<T>(op: string, args: Record<string, unknown> & { instance_id: string }): Promise<T> {
+  const previous = instanceChains.get(args.instance_id) ?? Promise.resolve();
+  const call = previous.then(() => jacOpUnordered<T>(`driver_${op}`, args));
+  const settled = call.then(() => undefined, () => undefined);
+  instanceChains.set(args.instance_id, settled);
+  // Drop the entry once idle so disposed instances do not accumulate.
+  void settled.then(() => { if (instanceChains.get(args.instance_id) === settled) instanceChains.delete(args.instance_id); });
+  return call;
+}
+
+/** One-shot generation needs no ordering and runs as long as the Jac
+ * side's 60s review timeout; give it headroom past the default op budget. */
+const ONE_SHOT_TIMEOUT_MS = 90_000;
+function oneShotOp<T>(op: string, args: Record<string, unknown>): Promise<T> {
+  return jacOpUnordered<T>(`driver_${op}`, args, ONE_SHOT_TIMEOUT_MS);
 }
 
 function rethrowTyped(error: unknown): never {
@@ -215,7 +234,7 @@ function makeInstance(inner: ProviderInstance, instanceId: string): ProviderInst
     },
     generateText: inner.generateText
       ? (prompt: string, options?: TextGenerationOptions) =>
-          driverOp<{ text?: string }>("generate_text", {
+          oneShotOp<{ text?: string }>("generate_text", {
             instance_id: instanceId,
             prompt,
             options,
@@ -223,7 +242,7 @@ function makeInstance(inner: ProviderInstance, instanceId: string): ProviderInst
       : undefined,
     reviewPermission: inner.reviewPermission
       ? (prompt: string, _signal?: AbortSignal) =>
-          driverOp<{ text?: string }>("review_permission", {
+          oneShotOp<{ text?: string }>("review_permission", {
             instance_id: instanceId,
             prompt,
           }).then((r) => r.text ?? "")
