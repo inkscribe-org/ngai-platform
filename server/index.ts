@@ -238,7 +238,7 @@ import {
   parseMcpServersImport,
   parseStoredMcpServer,
 } from "./mcp-registry.ts";
-import { McpOAuthError, McpSignInError, McpOAuthManager, mcpOAuthRedirectUri, withMcpSignIn, withoutPendingSignIn } from "./mcp-oauth.ts";
+import { jacMcpOAuth, mcpAuthState, mcpOAuthMirrorApplyFrame, mcpOAuthRedirectUri, withoutPendingSignIn, type McpOAuthOpError } from "./jac-mcp-oauth.ts";
 import { probeMcpServer } from "./mcp-probe.ts";
 import {
   GROUP_GOAL_MAX_TURNS,
@@ -1891,17 +1891,20 @@ function queuedTurnTrigger(item: { trigger?: UsageTrigger; sender?: ResolvedSend
   return item.sender ? { kind: "user", label: item.sender.name } : { kind: "owner" };
 }
 const providerAuthSessions = new ProviderAuthSessions();
-/** OAuth sign-in for URL servers; tokens live in their own owner-only file. */
-const mcpOAuth = new McpOAuthManager({
-  file: join(DATA_DIR, "mcp-oauth.json"),
-  isOwnerLive: (owner) => owner === "loopback" || sessions.isLive(owner),
-  // Read the registered app when needed; never copy its secret into the token store.
-  clients: (name, url) => {
-    const raw = cfg.mcpServers?.[name];
-    const parsed = raw === undefined ? null : parseStoredMcpServer(name, raw);
-    return parsed?.ok && isRemoteMcpServer(parsed.server) && parsed.server.url === url ? parsed.server.oauth : undefined;
-  },
-});
+/** OAuth sign-in for URL servers lives in the Jac harness
+ * (jac/harness/mcp_oauth.jac; tokens in their own owner-only file). It asks
+ * node two things over the bridge: whether a sign-in's session is still
+ * live, and which app is registered for a server — read when needed, so
+ * its secret is never copied into the token store. */
+const mcpOAuth = jacMcpOAuth;
+function mcpOAuthOwnerLive(owner: string): boolean {
+  return owner === "loopback" || sessions.isLive(owner);
+}
+function mcpOAuthClient(name: string, url: string) {
+  const raw = cfg.mcpServers?.[name];
+  const parsed = raw === undefined ? null : parseStoredMcpServer(name, raw);
+  return parsed?.ok && isRemoteMcpServer(parsed.server) && parsed.server.url === url ? parsed.server.oauth : undefined;
+}
 // OpenCode reads provider keys (ANTHROPIC_API_KEY, OPENAI_API_KEY, …) from
 // its environment, as it does in a terminal, but only where that environment
 // is the person's own shell (openCodeProviderKeysAllowed). Wired before the
@@ -5712,7 +5715,7 @@ function closeSessionStreams(sessionId: string): void {
 }
 sessions.onSessionRevoked((sessionId) => {
   providerAuthSessions.revokeOwner(sessionId);
-  mcpOAuth.revokeOwner(sessionId);
+  void mcpOAuth.revokeOwner(sessionId).catch(() => undefined);
   closeSessionStreams(sessionId);
   // A revoked owner device no longer vouches for its lines (cloudOwnerPerson).
   ownerOnlyCache.clear();
@@ -10062,7 +10065,7 @@ async function startTurn(
       // composio — only to a driver that can mount them. Their tools are
       // never pre-allowed, so every call rides the normal permission flow.
       if (instance.adapter.capabilities.customMcp === true) {
-        const custom = await withMcpSignIn(engineMcpServers(bot), mcpOAuth);
+        const custom = await mcpOAuth.withSignIn(engineMcpServers(bot));
         if (Object.keys(custom).length) integrations.custom = custom;
       }
       // CLI engines work inside the bot's own workspace directory rather
@@ -11311,10 +11314,16 @@ const routineBridgeOps: Record<string, (payload: BridgePayload) => unknown> = {
   // re-enter the serialized op queue (server/jac-routines.ts).
   emit: (payload) => {
     const frame = payload.payload as Record<string, unknown>;
+    // MCP sign-in state is node's own mirror, never a client event.
+    if (mcpOAuthMirrorApplyFrame(frame)) return { ok: true };
     if (!mirrorApplyFrame(frame)) webhookMirrorApplyFrame(frame);
     broadcast(frame);
     return { ok: true };
   },
+  // jac/harness/mcp_oauth.jac: is a sign-in's browser session still live,
+  // and which sign-in app does config.json register for this server.
+  mcp_owner_live: (payload) => ({ live: mcpOAuthOwnerLive(bridgeString(payload.owner)) }),
+  mcp_oauth_client: (payload) => ({ client: mcpOAuthClient(bridgeString(payload.name), bridgeString(payload.url)) ?? null }),
   // delivery:"post" webhooks land in a dedicated "Updates" task, never
   // bot.threadId (the bot's currently-selected task). Fixes
   // https://github.com/milind-soni/OpenMausBot/issues/2071: a post used to
@@ -12830,7 +12839,7 @@ async function runGroupMemberTurn(
   }
   // user-configured MCP servers: same gating as the 1:1 site above.
   if (instance.adapter.capabilities.customMcp === true) {
-    const custom = await withMcpSignIn(engineMcpServers(bot), mcpOAuth);
+    const custom = await mcpOAuth.withSignIn(engineMcpServers(bot));
     if (Object.keys(custom).length) integrations.custom = custom;
   }
   // Connected-app discovery is intentionally awaited before a provider owns
@@ -15653,7 +15662,7 @@ function mcpServerResponse() {
   const policy = managedPolicy.current();
   const servers = listMcpServers(cfg.mcpServers).map((server) => {
     if (!("url" in server)) return server;
-    const auth = mcpOAuth.authState(server.name, server.url);
+    const auth = mcpAuthState(server.name, server.url);
     // the redirect URI to register with a pre-registered sign-in app
     const listed = server.oauth ? { ...server, oauth: { ...server.oauth, redirectUri: mcpOAuthRedirectUri(server.url) } } : server;
     return auth === "none" ? listed : { ...listed, auth };
@@ -15682,7 +15691,7 @@ function mcpServerBody(body: unknown): Record<string, unknown> {
 /** Configured MCP servers that may reach this bot's engine. While enrolled,
  * the organisation's allow-list filters them; config.json is never changed. */
 function engineMcpServers(bot: BotRecord) {
-  return withoutPendingSignIn(managedPolicy.filterMcp(customMcpServers(cfg, bot.mcpServers)), mcpOAuth);
+  return withoutPendingSignIn(managedPolicy.filterMcp(customMcpServers(cfg, bot.mcpServers)));
 }
 
 function persistMcpServers(next: Record<string, unknown>): void {
@@ -16448,7 +16457,13 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       return json(res, 200, sessions.issueStreamTicket(auth.session.id));
     }
     if (method === "POST" && path === "/api/auth/logout") {
-      if (auth.kind === "session") sessions.revoke(auth.session.id);
+      if (auth.kind === "session") {
+        sessions.revoke(auth.session.id);
+        // The revocation listener cancels this session's MCP sign-ins without
+        // waiting (it cannot await); a logout answers only once their loopback
+        // listeners are closed. A second revoke of the same owner is a no-op.
+        await mcpOAuth.revokeOwner(auth.session.id).catch(() => undefined);
+      }
       res.setHeader("set-cookie", clearSessionCookie(SESSION_COOKIE));
       return json(res, 200, { ok: true });
     }
@@ -24344,6 +24359,9 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
 
     // ── custom MCP servers (a local command or a URL; secrets write-only) ──
     if (method === "GET" && path === "/api/mcp/servers") {
+      // mcp-oauth.json is read through on the Jac side; catch up with any
+      // other process's writes before listing.
+      await mcpOAuth.refresh().catch(() => undefined);
       return json(res, 200, mcpServerResponse());
     }
 
@@ -24365,12 +24383,12 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       try {
         const name = mcpTest[1];
         let target = parsed.server;
-        if (isRemoteMcpServer(target) && mcpOAuth.authState(name, target.url) === "signed-in") {
-          const signedIn = (await withMcpSignIn({ [name]: target }, mcpOAuth))[name];
+        if (isRemoteMcpServer(target) && mcpAuthState(name, target.url) === "signed-in") {
+          const signedIn = (await mcpOAuth.withSignIn({ [name]: target }))[name];
           if (signedIn) target = { ...signedIn, enabled: target.enabled } as typeof target;
         }
         const result = await probeMcpServer(target, undefined, controller.signal);
-        if (!result.ok && result.auth === "required" && isRemoteMcpServer(target)) mcpOAuth.markNeedsSignIn(name, target.url);
+        if (!result.ok && result.auth === "required" && isRemoteMcpServer(target)) await mcpOAuth.markNeedsSignIn(name, target.url);
         return json(res, 200, result);
       } finally {
         res.off("close", disconnect);
@@ -24395,11 +24413,11 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       res.setHeader("Cache-Control", "no-store");
       try {
         if (action === "sign-in" && method === "GET" && flowId) {
-          const status = mcpOAuth.status(name!, flowId, owner);
+          const status = await mcpOAuth.status(name!, flowId, owner);
           return status ? json(res, 200, { auth: status }) : json(res, 404, { error: "This sign-in is no longer available in this browser. Start again." });
         }
         if (action === "sign-in" && method === "DELETE") {
-          mcpOAuth.cancelFlow(name!, owner, flowId);
+          await mcpOAuth.cancelFlow(name!, owner, flowId);
           return json(res, 200, { ok: true });
         }
         if (action === "sign-in" && method === "POST" && flowId) {
@@ -24411,16 +24429,22 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
           return json(res, 200, { auth: await mcpOAuth.completeCallback(name!, flowId, body.callbackUrl, owner) });
         }
         if (action === "sign-in" && method === "POST" && !flowId) {
-          const started = await mcpOAuth.start(name!, url, undefined, owner);
+          const started = await mcpOAuth.start(name!, url, owner);
           if (auth.kind === "session" && !sessions.isLive(auth.session.id)) {
-            mcpOAuth.revokeOwner(owner);
+            await mcpOAuth.revokeOwner(owner);
             return json(res, 401, { error: "Your session ended. Start a new sign-in." });
           }
           return json(res, 200, { auth: started });
         }
       } catch (error) {
-        if (error instanceof McpSignInError) return json(res, error.status, { error: error.message });
-        if (error instanceof McpOAuthError) return json(res, 400, { error: error.message, code: error.code });
+        // The Jac side answers a sign-in the person can act on with its
+        // status (400/404/409, plus a code for not-oauth / no-registration /
+        // port-busy), a start that could not begin with 502, a harness that
+        // is down with 503. Anything else is a server error.
+        const failed = error as McpOAuthOpError;
+        if (typeof failed?.status === "number" && failed.status !== 500) {
+          return json(res, failed.status, typeof failed.code === "string" ? { error: failed.message, code: failed.code } : { error: failed.message });
+        }
         if (method === "POST" && !flowId) return json(res, 502, { error: error instanceof Error ? error.message : "Sign-in could not start." });
         throw error;
       }
@@ -24502,7 +24526,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
           const next = { ...current };
           delete next[name];
           persistMcpServers(next);
-          mcpOAuth.forget(name);
+          await mcpOAuth.forget(name).catch(() => undefined);
           return json(res, 200, mcpServerResponse());
         }
 
@@ -24532,7 +24556,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         // Any other edit (a new header, say) drops a sign-in request that has
         // no tokens behind it; the next Test asks again if it still applies.
         if (before !== after || app(existing.server) !== app(parsed.server)
-          || (after && mcpOAuth.authState(name, after) === "needs-sign-in")) mcpOAuth.forget(name);
+          || (after && mcpAuthState(name, after) === "needs-sign-in")) await mcpOAuth.forget(name).catch(() => undefined);
         return json(res, 200, mcpServerResponse());
       } finally {
         mcpConfigBusy = false;
@@ -25724,6 +25748,7 @@ server.listen(PORT, "127.0.0.1", async () => {
   // Connected apps: the sync connection-mode mirror needs the harness's
   // reading of the env broker before turns ask whether apps are configured.
   if (jacUrl) await composio.start().catch((error) => console.error(`connected apps: state load failed: ${error instanceof Error ? error.message : String(error)}`));
+  if (jacUrl) await mcpOAuth.refresh().catch((error) => console.error(`mcp sign-in: mirror load failed: ${error instanceof Error ? error.message : String(error)}`));
   // The library reads routine state through the synchronous mirror, so it
   // initializes whether or not the harness answered — an empty mirror is
   // its cold-start truth either way.
@@ -25839,7 +25864,7 @@ const gracefulShutdown = createGracefulShutdown({
       code = 1;
     }
     closeMessageDb();
-    mcpOAuth.dispose();
+    void mcpOAuth.dispose().catch(() => undefined);
     releaseDataDirLeaseAtExit();
     // Every launcher in this repo starts the server again on this code (server/restart.ts).
     process.exit(restartRequested && code === 0 ? RESTART_EXIT_CODE : code);

@@ -1,9 +1,23 @@
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-import { probeMcpServer } from "./mcp-probe.ts";
+import { probeMcpServer, type OffersSignIn } from "./mcp-probe.ts";
 import { startFakeHttpMcp } from "./testing/fake-http-mcp-server.ts";
 import { startFakeOAuth } from "./testing/fake-oauth-server.ts";
+
+/** Discovery itself is mcp_oauth.jac's (and its tests'); here it is a seam
+ * that records what the probe asked and answers like discovery would for
+ * the fake authorization server: a sign-in exists iff the 401 names it. */
+function discovery(): { offersSignIn: OffersSignIn; asked: Array<[string, string | null, number]> } {
+  const asked: Array<[string, string | null, number]> = [];
+  return {
+    asked,
+    offersSignIn: async (url, wwwAuthenticate, timeoutMs) => {
+      asked.push([url, wwwAuthenticate, timeoutMs]);
+      return Boolean(wwwAuthenticate?.includes("resource_metadata="));
+    },
+  };
+}
 
 const fakeServer = fileURLToPath(new URL("./testing/fake-mcp-server.ts", import.meta.url));
 
@@ -106,8 +120,10 @@ describe("remote MCP probe", () => {
   it("reports the status of a refusal without echoing the header value", async () => {
     const fake = await startFakeHttpMcp({ requireHeader: { name: "Authorization", value: "Bearer right" } });
     try {
-      const result = await probeMcpServer({ type: "http", url: fake.url, headers: { Authorization: "Bearer wrong-token" }, enabled: false }, 2_000);
+      const seam = discovery();
+      const result = await probeMcpServer({ type: "http", url: fake.url, headers: { Authorization: "Bearer wrong-token" }, enabled: false }, 2_000, undefined, seam.offersSignIn);
       expect(result).toEqual({ ok: false, error: "The server answered HTTP 401. Check the address and headers." });
+      expect(seam.asked).toEqual([[fake.url, null, 5_000]]);
       expect(JSON.stringify(result)).not.toContain("wrong-token");
     } finally {
       await fake.close();
@@ -119,9 +135,29 @@ describe("remote MCP probe", () => {
     const fake = await startFakeHttpMcp({ acceptBearer: oauth.isValid, wwwAuthenticate: oauth.challenge });
     try {
       const started = Date.now();
-      const result = await probeMcpServer({ type: "http", url: fake.url, headers: {}, enabled: false }, 8_000);
+      const seam = discovery();
+      const result = await probeMcpServer({ type: "http", url: fake.url, headers: {}, enabled: false }, 8_000, undefined, seam.offersSignIn);
       expect(result).toEqual({ ok: false, auth: "required", error: "This server needs you to sign in." });
+      expect(seam.asked).toEqual([[fake.url, oauth.challenge, 5_000]]);
       expect(Date.now() - started).toBeLessThan(2_000);
+    } finally {
+      await fake.close();
+      await oauth.close();
+    }
+  });
+
+  it("keeps the plain status when discovery fails or the caller leaves", async () => {
+    const oauth = await startFakeOAuth();
+    const fake = await startFakeHttpMcp({ acceptBearer: oauth.isValid, wwwAuthenticate: oauth.challenge });
+    try {
+      const server = { type: "http" as const, url: fake.url, headers: {}, enabled: false };
+      const broken: OffersSignIn = async () => { throw Object.assign(new Error("routines unavailable"), { status: 503 }); };
+      expect(await probeMcpServer(server, 2_000, undefined, broken))
+        .toEqual({ ok: false, error: "The server answered HTTP 401. Check the address and headers." });
+      const controller = new AbortController();
+      const hanging: OffersSignIn = () => { controller.abort(); return new Promise(() => {}); };
+      expect(await probeMcpServer(server, 2_000, controller.signal, hanging))
+        .toEqual({ ok: false, error: "The server answered HTTP 401. Check the address and headers." });
     } finally {
       await fake.close();
       await oauth.close();

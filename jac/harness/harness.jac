@@ -414,3 +414,33 @@ glob connectors_toolkit_card: any = _connectors_toolkit_card;
 glob connectors_normalize_alias: any = _connectors_normalize_alias;
 glob connectors_classify_call: any = _connectors_classify_call;
 glob connectors_evaluate: any = _connectors_evaluate;
+
+# --- mcp_oauth module HTTP surface -------------------------------------------
+# MCP OAuth sign-in (jac/harness/mcp_oauth.jac). node calls these through
+# jacOpConcurrent (off the routine chain); the module is lock-guarded.
+import from mcp_oauth {
+    mcp_oauth_states as _mcp_oauth_states,
+    mcp_oauth_start as _mcp_oauth_start,
+    mcp_oauth_status as _mcp_oauth_status,
+    mcp_oauth_cancel_flow as _mcp_oauth_cancel_flow,
+    mcp_oauth_complete as _mcp_oauth_complete,
+    mcp_oauth_revoke_owner as _mcp_oauth_revoke_owner,
+    mcp_oauth_sign_out as _mcp_oauth_sign_out,
+    mcp_oauth_forget as _mcp_oauth_forget,
+    mcp_oauth_mark_needs_sign_in as _mcp_oauth_mark_needs_sign_in,
+    mcp_oauth_with_sign_in as _mcp_oauth_with_sign_in,
+    mcp_oauth_discover as _mcp_oauth_discover,
+    mcp_oauth_dispose as _mcp_oauth_dispose,
+}
+glob mcp_oauth_states: any = _mcp_oauth_states;
+glob mcp_oauth_start: any = _mcp_oauth_start;
+glob mcp_oauth_status: any = _mcp_oauth_status;
+glob mcp_oauth_cancel_flow: any = _mcp_oauth_cancel_flow;
+glob mcp_oauth_complete: any = _mcp_oauth_complete;
+glob mcp_oauth_revoke_owner: any = _mcp_oauth_revoke_owner;
+glob mcp_oauth_sign_out: any = _mcp_oauth_sign_out;
+glob mcp_oauth_forget: any = _mcp_oauth_forget;
+glob mcp_oauth_mark_needs_sign_in: any = _mcp_oauth_mark_needs_sign_in;
+glob mcp_oauth_with_sign_in: any = _mcp_oauth_with_sign_in;
+glob mcp_oauth_discover: any = _mcp_oauth_discover;
+glob mcp_oauth_dispose: any = _mcp_oauth_dispose;

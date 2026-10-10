@@ -242,6 +242,8 @@ interface JacFailureEnvelope {
   ok: false;
   status?: number;
   error?: string;
+  /** a machine-readable reason some subsystems add (mcp_oauth: "not-oauth"…) */
+  code?: string;
 }
 
 async function jacOpRaw(name: string, args: Record<string, unknown>, timeoutMs = OP_TIMEOUT_MS): Promise<unknown> {
@@ -274,7 +276,10 @@ async function jacOpRaw(name: string, args: Record<string, unknown>, timeoutMs =
   }
   if (result && typeof result === "object" && "ok" in result && result.ok === false) {
     const failed = result as JacFailureEnvelope;
-    throw Object.assign(new Error(failed.error ?? "routine operation failed"), { status: failed.status ?? 500 });
+    throw Object.assign(
+      new Error(failed.error ?? "routine operation failed"),
+      { status: failed.status ?? 500, ...(typeof failed.code === "string" ? { code: failed.code } : {}) },
+    );
   }
   return result;
 }
@@ -294,10 +299,11 @@ export function jacOp<T = unknown>(name: string, args: Record<string, unknown> =
 }
 
 /** An op outside the serialized chain, for subsystems with no ordering
- * contract against routines and with slow upstream I/O (connected apps
- * relay a tool call for up to 10 minutes; queued behind it, every routine
- * op would stall). The harness serves sync defs on worker threads, so
- * these run concurrently there too. */
+ * contract against routines/webhooks and with slow upstream I/O (connected
+ * apps relay a tool call for up to 10 minutes; MCP sign-in does discovery,
+ * registration and token refresh). Queued, every routine op would stall
+ * behind them. The harness serves sync defs on worker threads, so the Jac
+ * side of such a subsystem must be thread-safe on its own. */
 export function jacOpUnordered<T = unknown>(
   name: string,
   args: Record<string, unknown> = {},

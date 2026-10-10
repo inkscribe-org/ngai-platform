@@ -5,7 +5,7 @@ import {
 } from "./config.ts";
 import { createLineSplitter } from "./mcp-bridge.ts";
 import { McpHttpError, RemoteMcpClient } from "./mcp-http.ts";
-import { discoverMcpAuth } from "./mcp-oauth-discovery.ts";
+import { jacMcpOAuth } from "./jac-mcp-oauth.ts";
 import { isRemoteMcpServer, type StoredMcpServer, type StoredRemoteMcpServer, type StoredStdioMcpServer } from "./mcp-registry.ts";
 import { killCliTree, spawnCli } from "./procs.ts";
 
@@ -66,6 +66,13 @@ function publicTools(raw: unknown[], secrets: Record<string, string>): McpProbeT
   return tools;
 }
 
+/** Whether a 401's challenge leads to a usable OAuth sign-in, within
+ * `timeoutMs`. Discovery lives with the sign-in manager in the Jac harness
+ * (jac/harness/mcp_oauth.jac); tests may pass their own. */
+export type OffersSignIn = (url: string, wwwAuthenticate: string | null, timeoutMs: number) => Promise<boolean>;
+
+const DISCOVERY_TIMEOUT_MS = 5_000;
+
 /** Prove the MCP handshake and list the tools of one configured server,
  * whichever way it is reached. Neither path returns anything the renderer
  * must not see: child stderr, environment values, header values. */
@@ -73,10 +80,22 @@ export function probeMcpServer(
   server: StoredMcpServer,
   timeoutMs = DEFAULT_TIMEOUT_MS,
   signal?: AbortSignal,
+  offersSignIn: OffersSignIn = jacMcpOAuth.offersSignIn,
 ): Promise<McpProbeResult> {
   return isRemoteMcpServer(server)
-    ? probeRemoteMcpServer(server, timeoutMs, signal)
+    ? probeRemoteMcpServer(server, timeoutMs, signal, offersSignIn)
     : probeStdioMcpServer(server, timeoutMs, signal);
+}
+
+/** offersSignIn, but false on any failure and on the caller leaving. */
+function signInOffered(offersSignIn: OffersSignIn, url: string, wwwAuthenticate: string | null, signal?: AbortSignal): Promise<boolean> {
+  if (signal?.aborted) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    const onAbort = () => resolve(false);
+    signal?.addEventListener("abort", onAbort, { once: true });
+    offersSignIn(url, wwwAuthenticate, DISCOVERY_TIMEOUT_MS).then(resolve, () => resolve(false))
+      .finally(() => signal?.removeEventListener("abort", onAbort));
+  });
 }
 
 /** Connect to a remote server over its transport, bounded by the same
@@ -85,7 +104,8 @@ export function probeMcpServer(
 async function probeRemoteMcpServer(
   server: StoredRemoteMcpServer,
   timeoutMs: number,
-  signal?: AbortSignal,
+  signal: AbortSignal | undefined,
+  offersSignIn: OffersSignIn,
 ): Promise<McpProbeResult> {
   if (signal?.aborted) return { ok: false, error: publicProbeError("cancelled") };
   const timeout = AbortSignal.timeout(timeoutMs);
@@ -103,12 +123,9 @@ async function probeRemoteMcpServer(
     if (timeout.aborted) return { ok: false, error: publicProbeError("timeout") };
     // A 401 that names an OAuth sign-in is not a wrong address or header:
     // the person has to sign in. Anything else keeps the plain status.
-    if (error instanceof McpHttpError && error.status === 401) {
-      const discovery = AbortSignal.timeout(5_000);
-      const meta = await discoverMcpAuth(server.url, error.wwwAuthenticate ?? null, {
-        signal: signal ? AbortSignal.any([signal, discovery]) : discovery,
-      }).catch(() => null);
-      if (meta) return { ok: false, auth: "required", error: SIGN_IN_REQUIRED };
+    if (error instanceof McpHttpError && error.status === 401
+      && await signInOffered(offersSignIn, server.url, error.wwwAuthenticate ?? null, signal)) {
+      return { ok: false, auth: "required", error: SIGN_IN_REQUIRED };
     }
     if (error instanceof McpHttpError && error.kind === "status") {
       return { ok: false, error: `The server answered HTTP ${error.status}. Check the address and headers.` };
