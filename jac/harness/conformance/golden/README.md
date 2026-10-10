@@ -7,7 +7,7 @@ side of `../run-routines.sh`: `routines-ops.json` replayed through the TS
 
 ```
 git worktree add /tmp/pre-port b99ecc9          # last commit with RoutineManager
-git show 2ef7c46:jac/harness/conformance/apply-routines-node.ts \
+git show "$(git log --format=%H -1 --grep="^phase 2: routines on Jac")":jac/harness/conformance/apply-routines-node.ts \
   > /tmp/pre-port/jac/harness/conformance/apply-routines-node.ts
 cp routines-ops.json /tmp/pre-port/jac/harness/conformance/
 cd /tmp/pre-port/jac/harness/conformance && mkdir -p /tmp/g/data

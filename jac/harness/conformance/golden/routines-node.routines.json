@@ -2,7 +2,7 @@
   "version": 1,
   "routines": [
     {
-      "id": "3590cea2-5b48-4956-ae2f-dbd96115b5a3",
+      "id": "bd9f8692-b19e-451a-899e-cc0c75a3f7e1",
       "name": "Stoppable goal",
       "prompt": "Pause then stop",
       "target": "room-goal",
@@ -21,7 +21,7 @@
       "updatedAt": 1789339800000
     },
     {
-      "id": "4d60fc59-a5b2-4caf-be45-25b90fe5e385",
+      "id": "c5e9d25d-35fd-469b-97f5-d29a49883781",
       "name": "Capped runner",
       "prompt": "Hit the run limit",
       "target": "bot",
@@ -41,7 +41,7 @@
       "updatedAt": 1789338300000
     },
     {
-      "id": "df146914-37c0-418e-8172-43ff327fb7a5",
+      "id": "2e5fa076-78e8-4a0e-9db7-bd7965b519c0",
       "name": "Failing goal dispatch",
       "prompt": "This goal dispatch fails at the bridge",
       "target": "room-goal",
@@ -60,7 +60,7 @@
       "updatedAt": 1789338300000
     },
     {
-      "id": "09951c89-5da7-430a-adfb-c5cde9e761a5",
+      "id": "a291e859-e333-49b2-bc1c-c2a6c0741cf4",
       "name": "Failing dispatch",
       "prompt": "This dispatch fails at the bridge",
       "target": "bot",
@@ -78,7 +78,7 @@
       "updatedAt": 1789337700000
     },
     {
-      "id": "51c03d12-3889-492b-a515-4c7789874851",
+      "id": "ee9c2e28-e319-40e2-a498-692037e40e3a",
       "name": "Group cutoff",
       "prompt": "Stop the room",
       "target": "room-goal",
@@ -97,7 +97,7 @@
       "updatedAt": 1789337100000
     },
     {
-      "id": "18f1c07d-a35f-49b5-b23e-afd96c7107a9",
+      "id": "8db76aaa-23f7-4b97-b333-be81d3ce44d6",
       "name": "Delegated waiter",
       "prompt": "Wait for delegations",
       "target": "bot",
@@ -116,7 +116,7 @@
       "updatedAt": 1789336500000
     },
     {
-      "id": "df7d35b1-dbb4-4d57-868c-1034586fe764",
+      "id": "91b5da33-3471-4452-b0f4-aa6ca793cf4f",
       "name": "Routed three",
       "prompt": "Chosen live thread",
       "target": "bot",
@@ -134,7 +134,7 @@
       "updatedAt": 1789336200001
     },
     {
-      "id": "ce9392f3-195d-482c-b448-2a46c6592c7e",
+      "id": "5792424b-88d7-4994-8899-cb3f35f1783d",
       "name": "Routed two",
       "prompt": "Snapshot the destination",
       "target": "bot",
@@ -152,7 +152,7 @@
       "updatedAt": 1789335600003
     },
     {
-      "id": "d025de32-7ae5-4765-9d2f-55050b2310c5",
+      "id": "b6f3ff59-3e55-4291-b1b2-bc6d1fe6e4c5",
       "name": "Continuity carrier",
       "prompt": "Carry the report forward",
       "target": "bot",
@@ -173,7 +173,7 @@
       "lastSkippedAt": 1789339800000
     },
     {
-      "id": "4597e5b5-cf98-43df-b145-06728ebe81db",
+      "id": "7f7e75f9-ccd7-4f8e-bb5e-88fd1e1e86f2",
       "name": "Receipt routine v3",
       "prompt": "Confirmed by chat card",
       "target": "bot",
@@ -192,7 +192,7 @@
       "updatedAt": 1789334400000
     },
     {
-      "id": "729b51fa-a1d3-4e58-a06a-7000e79641a7",
+      "id": "9714c121-d793-4d17-bc5f-9f768cd0f1d5",
       "name": "Late catcher",
       "prompt": "Catch up work",
       "target": "bot",
@@ -213,7 +213,7 @@
       "lastSkippedAt": 1789338600000
     },
     {
-      "id": "49530a7c-2fc4-4764-9fd3-f8a5fcbe13e4",
+      "id": "cb62da43-273a-4d7a-ab42-966151b7f29d",
       "name": "Room goal six",
       "prompt": "Room disappears while queued",
       "target": "room-goal",
@@ -232,7 +232,7 @@
       "updatedAt": 1789288800000
     },
     {
-      "id": "15bbaa6d-adb7-4831-958c-9141f065fb5c",
+      "id": "31c1f2c7-74ca-4046-aa9e-332a5c394955",
       "name": "Room goal four",
       "prompt": "Queued behind busy room",
       "target": "room-goal",
@@ -251,7 +251,7 @@
       "updatedAt": 1789288800000
     },
     {
-      "id": "63d11eeb-1151-49eb-9d7a-a3d916850972",
+      "id": "1387b7fb-e7a6-4538-adcf-e482b70ffe43",
       "name": "Room goal three",
       "prompt": "Failing goal",
       "target": "room-goal",
@@ -270,7 +270,7 @@
       "updatedAt": 1789287960000
     },
     {
-      "id": "ffc1ea94-fc33-4ebc-8c1c-1cbf5a2c89d1",
+      "id": "8698a2bc-c3d1-4ecb-974e-c0e2be2bc1ed",
       "name": "Room goal two",
       "prompt": "Second goal",
       "target": "room-goal",
@@ -289,7 +289,7 @@
       "updatedAt": 1789287660000
     },
     {
-      "id": "9d0f770c-72a4-4ee3-b213-bebb7b9e7da6",
+      "id": "5481e7bd-26bf-429f-ba1e-0850eda7bad8",
       "name": "Routed report",
       "prompt": "Report into the fixed chat",
       "target": "bot",
@@ -307,7 +307,7 @@
       "updatedAt": 1789326000001
     },
     {
-      "id": "0d98de23-d471-4ef3-bd84-2007f6205c8a",
+      "id": "56faa8d8-b9bc-4405-adf8-ae506f5e4733",
       "name": "Temp job",
       "prompt": "Temporary work",
       "target": "bot",
@@ -325,7 +325,7 @@
       "updatedAt": 1789326000000
     },
     {
-      "id": "22c9f453-b64c-492a-9fc0-15608dac6071",
+      "id": "e72d1afd-cc0d-4248-bcef-f9292e57494c",
       "name": "Continuity watcher",
       "prompt": "Watch continuously",
       "target": "bot",
@@ -347,7 +347,7 @@
       "lastSkippedAt": 1789289100000
     },
     {
-      "id": "fe70ec05-1a17-40fb-9553-6f164d7fcbd0",
+      "id": "d9ea1c04-3c26-4959-8992-3ca9d4432b9c",
       "name": "Room goal",
       "prompt": "Coordinate the launch checklist",
       "target": "room-goal",
@@ -366,7 +366,7 @@
       "updatedAt": 1789287000000
     },
     {
-      "id": "ad664797-42b2-4e37-8152-2d9c9f684395",
+      "id": "86b105a3-06c8-42e3-a3a1-71c1ba791ec1",
       "name": "Cron sweep",
       "prompt": "Sweep the docks",
       "target": "bot",
@@ -387,7 +387,7 @@
       "lastSkippedAt": 1789288200000
     },
     {
-      "id": "59d9adcf-a418-4b35-ac1e-3da7c5197e15",
+      "id": "3747b52c-a925-487f-b8fc-2cf367f6464b",
       "name": "Health check",
       "prompt": "Check the fixtures",
       "target": "bot",
@@ -408,7 +408,7 @@
       "lastSkippedAt": 1789339500000
     },
     {
-      "id": "21a5f1e7-7328-4e78-8553-40b0d7227765",
+      "id": "ed885a77-ea48-4654-8d04-1134d6553936",
       "name": "Morning digest",
       "prompt": "Summarize overnight activity",
       "target": "bot",
@@ -433,7 +433,7 @@
       "lastSkippedAt": 1789304400000
     },
     {
-      "id": "370477fd-c4bf-4453-b070-2b6d1803aa10",
+      "id": "e3142039-860e-456a-82d3-97c7fa8f3def",
       "name": "Ship report v2",
       "prompt": "Write the ship report",
       "target": "bot",
@@ -473,7 +473,7 @@
       }
     },
     {
-      "id": "cba8904d-ee80-434e-b4cf-0de5ef0168d2",
+      "id": "277c3319-3f00-456f-85e2-1ea0abbd65c5",
       "name": "Disabled interval that can never run",
       "prompt": "p",
       "target": "bot",
@@ -493,7 +493,7 @@
       "updatedAt": 1789286400000
     },
     {
-      "id": "9ce56697-6a93-4803-a187-abb2b206218d",
+      "id": "5f76cb9a-21c7-472d-b7d0-f4263320941a",
       "name": "x",
       "prompt": "p",
       "target": "bot",
@@ -522,8 +522,8 @@
   ],
   "runs": [
     {
-      "id": "ce52b334-468e-41a4-89fd-aaa4bfa59303",
-      "routineId": "22c9f453-b64c-492a-9fc0-15608dac6071",
+      "id": "0fc21292-7edb-4240-95fc-a50c39070ffb",
+      "routineId": "e72d1afd-cc0d-4248-bcef-f9292e57494c",
       "routineName": "Continuity watcher",
       "prompt": "Watch continuously",
       "durationMinutes": 30,
@@ -546,8 +546,8 @@
       "finishedAt": 1789286700000
     },
     {
-      "id": "4cd76293-b868-4db7-be74-15de6228f394",
-      "routineId": "268831dc-3531-4597-a9d1-818128ad2d98",
+      "id": "b8e3cd90-1d12-4dfa-bd2e-9b7bcfd91552",
+      "routineId": "53e86d2a-4e57-4421-b37d-a1e56b3d16f9",
       "routineName": "Queued worker",
       "prompt": "Work the queue",
       "durationMinutes": 30,
@@ -567,8 +567,8 @@
       "seenAt": 1789289700000
     },
     {
-      "id": "1ae19705-1c4b-4cbf-afd7-c3a2a1fd3cbc",
-      "routineId": "ad664797-42b2-4e37-8152-2d9c9f684395",
+      "id": "6becd94d-994e-40b8-ba89-d1141a243098",
+      "routineId": "86b105a3-06c8-42e3-a3a1-71c1ba791ec1",
       "routineName": "Cron sweep",
       "prompt": "Sweep the docks",
       "durationMinutes": 30,
@@ -591,8 +591,8 @@
       "finishedAt": 1789286700000
     },
     {
-      "id": "0c96fedf-9519-480d-adfe-09c302827fac",
-      "routineId": "22c9f453-b64c-492a-9fc0-15608dac6071",
+      "id": "250e8168-4b20-4a74-b05f-22bb64f015cf",
+      "routineId": "e72d1afd-cc0d-4248-bcef-f9292e57494c",
       "routineName": "Continuity watcher",
       "prompt": "Watch continuously",
       "durationMinutes": 30,
@@ -611,8 +611,8 @@
       "finishedAt": 1789287000000
     },
     {
-      "id": "8475a33d-2457-43fa-ad76-b6f4ebf80dfd",
-      "routineId": "fe70ec05-1a17-40fb-9553-6f164d7fcbd0",
+      "id": "e0d51efb-b932-4b3f-ab94-b0ec237908de",
+      "routineId": "d9ea1c04-3c26-4959-8992-3ca9d4432b9c",
       "routineName": "Room goal",
       "prompt": "Coordinate the launch checklist",
       "durationMinutes": 30,
@@ -630,11 +630,11 @@
       "startedAt": 1789287000000,
       "goalStatus": "completed",
       "finishedAt": 1789287000000,
-      "output": "Launch checklist done. Key «redacted 34 chars»."
+      "output": "Launch checklist done. Key «redacted 47 chars»."
     },
     {
-      "id": "32b78032-8f23-4445-9a3c-663cb0724135",
-      "routineId": "268831dc-3531-4597-a9d1-818128ad2d98",
+      "id": "d65c3879-36ad-4f22-ae06-89098ee5ee22",
+      "routineId": "53e86d2a-4e57-4421-b37d-a1e56b3d16f9",
       "routineName": "Queued worker",
       "prompt": "Work the queue",
       "durationMinutes": 30,
@@ -654,8 +654,8 @@
       "finishedAt": 1789289100000
     },
     {
-      "id": "5c8e4c61-d5ce-4af2-a689-ee3b7210a1b0",
-      "routineId": "ad664797-42b2-4e37-8152-2d9c9f684395",
+      "id": "c4067f2e-88c0-4627-bf3c-011bddb0ac5e",
+      "routineId": "86b105a3-06c8-42e3-a3a1-71c1ba791ec1",
       "routineName": "Cron sweep",
       "prompt": "Sweep the docks",
       "durationMinutes": 30,
@@ -673,8 +673,8 @@
       "finishedAt": 1789287000000
     },
     {
-      "id": "dd3449c8-1234-4b1a-8f34-3e7747cdf581",
-      "routineId": "ffc1ea94-fc33-4ebc-8c1c-1cbf5a2c89d1",
+      "id": "e2769fe9-799d-4918-b673-6fa543e02735",
+      "routineId": "8698a2bc-c3d1-4ecb-974e-c0e2be2bc1ed",
       "routineName": "Room goal two",
       "prompt": "Second goal",
       "durationMinutes": 30,
@@ -696,8 +696,8 @@
       "seenAt": 1789289700000
     },
     {
-      "id": "9f6901eb-f2e7-4d17-a6e8-26ea71436abe",
-      "routineId": "22c9f453-b64c-492a-9fc0-15608dac6071",
+      "id": "c1b8e2b0-c89a-4253-ad95-b15b249cc901",
+      "routineId": "e72d1afd-cc0d-4248-bcef-f9292e57494c",
       "routineName": "Continuity watcher",
       "prompt": "Watch continuously",
       "durationMinutes": 30,
@@ -716,8 +716,8 @@
       "finishedAt": 1789336500000
     },
     {
-      "id": "993c3cbf-fa3f-44eb-8309-22b8f8dfd68d",
-      "routineId": "ad664797-42b2-4e37-8152-2d9c9f684395",
+      "id": "bf622185-a2a9-4863-b826-7dc9aa855b92",
+      "routineId": "86b105a3-06c8-42e3-a3a1-71c1ba791ec1",
       "routineName": "Cron sweep",
       "prompt": "Sweep the docks",
       "durationMinutes": 30,
@@ -735,8 +735,8 @@
       "finishedAt": 1789288800000
     },
     {
-      "id": "6ece638b-ace3-4b0d-bdfa-44da97c3ea52",
-      "routineId": "59d9adcf-a418-4b35-ac1e-3da7c5197e15",
+      "id": "222e2475-bb00-4467-8db6-fa632ce69f88",
+      "routineId": "3747b52c-a925-487f-b8fc-2cf367f6464b",
       "routineName": "Health check",
       "prompt": "Check the fixtures",
       "durationMinutes": 30,
@@ -757,8 +757,8 @@
       "seenAt": 1789289700000
     },
     {
-      "id": "8116f87a-fae5-4337-8117-f8cf36bd160b",
-      "routineId": "63d11eeb-1151-49eb-9d7a-a3d916850972",
+      "id": "a7ebc5e2-3e8e-4479-a522-2a8d319d769b",
+      "routineId": "1387b7fb-e7a6-4538-adcf-e482b70ffe43",
       "routineName": "Room goal three",
       "prompt": "Failing goal",
       "durationMinutes": 30,
@@ -779,8 +779,8 @@
       "finishedAt": 1789336500000
     },
     {
-      "id": "62365ede-60fc-44b2-80fb-e353f0a42713",
-      "routineId": "49530a7c-2fc4-4764-9fd3-f8a5fcbe13e4",
+      "id": "61e44d9b-fd3f-484b-805d-00a37ae8ec46",
+      "routineId": "cb62da43-273a-4d7a-ab42-966151b7f29d",
       "routineName": "Room goal six",
       "prompt": "Room disappears while queued",
       "durationMinutes": 30,
@@ -801,8 +801,8 @@
       "finishedAt": 1789336500000
     },
     {
-      "id": "64305199-5a0f-4000-8d91-6f4d0228c975",
-      "routineId": "15bbaa6d-adb7-4831-958c-9141f065fb5c",
+      "id": "6214c843-1c67-4630-9aa5-7e903a509aac",
+      "routineId": "31c1f2c7-74ca-4046-aa9e-332a5c394955",
       "routineName": "Room goal four",
       "prompt": "Queued behind busy room",
       "durationMinutes": 30,
@@ -823,8 +823,8 @@
       "finishedAt": 1789336500000
     },
     {
-      "id": "6215dee6-6fdf-4d31-b3cf-05050df9b3c3",
-      "routineId": "ad664797-42b2-4e37-8152-2d9c9f684395",
+      "id": "4a7375af-4d8b-4c7e-9add-d1ed00ea83cc",
+      "routineId": "86b105a3-06c8-42e3-a3a1-71c1ba791ec1",
       "routineName": "Cron sweep",
       "prompt": "Sweep the docks",
       "durationMinutes": 30,
@@ -843,8 +843,8 @@
       "finishedAt": 1789336500000
     },
     {
-      "id": "f5e6797a-9368-4b55-a32d-9aed363dba28",
-      "routineId": "268831dc-3531-4597-a9d1-818128ad2d98",
+      "id": "d99677cc-0ab8-4e58-8200-b672afab5835",
+      "routineId": "53e86d2a-4e57-4421-b37d-a1e56b3d16f9",
       "routineName": "Queued worker",
       "prompt": "Work the queue",
       "durationMinutes": 30,
@@ -864,8 +864,8 @@
       "finishedAt": 1789336500000
     },
     {
-      "id": "272170d6-3d61-4e10-811e-fb11f34488d5",
-      "routineId": "21a5f1e7-7328-4e78-8553-40b0d7227765",
+      "id": "0b313a61-c770-43b1-a406-08b026b9ce55",
+      "routineId": "ed885a77-ea48-4654-8d04-1134d6553936",
       "routineName": "Morning digest",
       "prompt": "Summarize overnight activity",
       "durationMinutes": 30,
@@ -884,8 +884,8 @@
       "finishedAt": 1789333900000
     },
     {
-      "id": "5c5d1fd5-c9fe-423d-af0f-037cfa6786e5",
-      "routineId": "268831dc-3531-4597-a9d1-818128ad2d98",
+      "id": "764f0c5f-b20a-4dc3-9abe-3857edc77ed9",
+      "routineId": "53e86d2a-4e57-4421-b37d-a1e56b3d16f9",
       "routineName": "Queued worker",
       "prompt": "Work the queue",
       "durationMinutes": 30,
@@ -903,8 +903,8 @@
       "error": "The routine was paused before this run started"
     },
     {
-      "id": "47ce6b64-89d5-4a14-8fd8-114446b09eef",
-      "routineId": "729b51fa-a1d3-4e58-a06a-7000e79641a7",
+      "id": "c59ff273-a46f-464b-807c-69cbe1690ed1",
+      "routineId": "9714c121-d793-4d17-bc5f-9f768cd0f1d5",
       "routineName": "Late catcher",
       "prompt": "Catch up work",
       "durationMinutes": 30,
@@ -924,8 +924,8 @@
       "seenAt": 1789333200000
     },
     {
-      "id": "f1754f9d-5688-4908-8953-85a713ff690c",
-      "routineId": "9d0f770c-72a4-4ee3-b213-bebb7b9e7da6",
+      "id": "130bce84-a454-458b-8767-7bd2d82e8206",
+      "routineId": "5481e7bd-26bf-429f-ba1e-0850eda7bad8",
       "routineName": "Routed report",
       "prompt": "Report into the fixed chat",
       "durationMinutes": 30,
@@ -944,8 +944,8 @@
       "finishedAt": 1789336500000
     },
     {
-      "id": "b73f2a0a-f6a9-4896-a595-dfdb01b8a115",
-      "routineId": "0d98de23-d471-4ef3-bd84-2007f6205c8a",
+      "id": "30a6b010-370a-4035-b57a-0582f04268c6",
+      "routineId": "56faa8d8-b9bc-4405-adf8-ae506f5e4733",
       "routineName": "Temp job",
       "prompt": "Temporary work",
       "durationMinutes": 30,
@@ -964,8 +964,8 @@
       "finishedAt": 1789336500000
     },
     {
-      "id": "8c65fbf1-74d5-42e7-855c-82d9384a8ba7",
-      "routineId": "59d9adcf-a418-4b35-ac1e-3da7c5197e15",
+      "id": "8838d77a-0330-4049-86c3-ccf5119213b0",
+      "routineId": "3747b52c-a925-487f-b8fc-2cf367f6464b",
       "routineName": "Health check",
       "prompt": "Check the fixtures",
       "durationMinutes": 30,
@@ -984,8 +984,8 @@
       "finishedAt": 1789336500000
     },
     {
-      "id": "f57a161d-9a9a-4dcf-ae94-79b744605b81",
-      "routineId": "9ce56697-6a93-4803-a187-abb2b206218d",
+      "id": "e7eafcef-22fa-4dc3-afac-9e4501296dca",
+      "routineId": "5f76cb9a-21c7-472d-b7d0-f4263320941a",
       "routineName": "x",
       "prompt": "p",
       "durationMinutes": 30,
@@ -1004,7 +1004,7 @@
       "finishedAt": 1789336500000
     },
     {
-      "id": "b3727d90-3e95-4840-9a2a-1ed200d9af3a",
+      "id": "181c5158-6fd5-4bdc-9899-10921307a7de",
       "routineId": "wh-1",
       "routineName": "CI hook",
       "prompt": "Run the deploy check",
@@ -1024,7 +1024,7 @@
       "finishedAt": 1789333800000
     },
     {
-      "id": "85092560-765c-4f9e-8ee5-abd76740958d",
+      "id": "1712ebf4-867c-4609-9dc6-eecd8aafa93f",
       "routineId": "wh-1",
       "routineName": "CI hook",
       "prompt": "Run the deploy check",
@@ -1044,7 +1044,7 @@
       "finishedAt": 1789333800000
     },
     {
-      "id": "6e1c68ca-a887-490e-a0b7-5f933ba805b5",
+      "id": "f14f2e94-ca10-4a56-a83f-048985989f32",
       "routineId": "wh-1",
       "routineName": "CI hook",
       "prompt": "Run the deploy check",
@@ -1064,8 +1064,8 @@
       "error": "Hook removed"
     },
     {
-      "id": "b49250c2-3680-4c00-a9d7-72259b75456c",
-      "routineId": "4597e5b5-cf98-43df-b145-06728ebe81db",
+      "id": "0d45d598-de85-4c07-b475-5217d047f933",
+      "routineId": "7f7e75f9-ccd7-4f8e-bb5e-88fd1e1e86f2",
       "routineName": "Receipt routine v2",
       "prompt": "Confirmed by chat card",
       "durationMinutes": 30,
@@ -1085,8 +1085,8 @@
       "finishedAt": 1789336500000
     },
     {
-      "id": "02cc8552-b73b-40b6-b3af-889bc90f3dde",
-      "routineId": "d025de32-7ae5-4765-9d2f-55050b2310c5",
+      "id": "7ea28ac5-155f-48a5-b141-317001a752fe",
+      "routineId": "b6f3ff59-3e55-4291-b1b2-bc6d1fe6e4c5",
       "routineName": "Continuity carrier",
       "prompt": "Carry the report forward",
       "durationMinutes": 30,
@@ -1105,8 +1105,8 @@
       "finishedAt": 1789336500000
     },
     {
-      "id": "4025794f-0b9f-4fd8-83e1-80bb1407713a",
-      "routineId": "4597e5b5-cf98-43df-b145-06728ebe81db",
+      "id": "8886ead3-8f11-4056-9c2d-a856476ff213",
+      "routineId": "7f7e75f9-ccd7-4f8e-bb5e-88fd1e1e86f2",
       "routineName": "Receipt routine v3",
       "prompt": "Confirmed by chat card",
       "durationMinutes": 30,
@@ -1126,8 +1126,8 @@
       "startedAt": 1789336500000
     },
     {
-      "id": "b890c0e7-66c0-42e9-8ad9-16d97304deb3",
-      "routineId": "729b51fa-a1d3-4e58-a06a-7000e79641a7",
+      "id": "858da9a5-2595-404d-a2dd-3875a3df45f5",
+      "routineId": "9714c121-d793-4d17-bc5f-9f768cd0f1d5",
       "routineName": "Late catcher",
       "prompt": "Catch up work",
       "durationMinutes": 30,
@@ -1146,8 +1146,8 @@
       "finishedAt": 1789336500000
     },
     {
-      "id": "e980f4ee-f009-4634-b4da-4acb17fb1e0c",
-      "routineId": "ce9392f3-195d-482c-b448-2a46c6592c7e",
+      "id": "2b21a65d-b19b-49f7-9504-89aad85ef140",
+      "routineId": "5792424b-88d7-4994-8899-cb3f35f1783d",
       "routineName": "Routed two",
       "prompt": "Snapshot the destination",
       "durationMinutes": 30,
@@ -1166,8 +1166,8 @@
       "finishedAt": 1789336500000
     },
     {
-      "id": "98ac65a0-f8fe-4023-adca-00f1376ba98b",
-      "routineId": "ce9392f3-195d-482c-b448-2a46c6592c7e",
+      "id": "1728483f-1266-4e34-b8bb-af99f8b88d3c",
+      "routineId": "5792424b-88d7-4994-8899-cb3f35f1783d",
       "routineName": "Routed two",
       "prompt": "Snapshot the destination",
       "durationMinutes": 30,
@@ -1186,8 +1186,8 @@
       "finishedAt": 1789336500000
     },
     {
-      "id": "ff1beaaa-5f82-4887-8746-d417f2132ac0",
-      "routineId": "df7d35b1-dbb4-4d57-868c-1034586fe764",
+      "id": "5f334092-4f1f-4ff7-a7cf-b9202506b367",
+      "routineId": "91b5da33-3471-4452-b0f4-aa6ca793cf4f",
       "routineName": "Routed three",
       "prompt": "Chosen live thread",
       "durationMinutes": 30,
@@ -1206,8 +1206,8 @@
       "finishedAt": 1789336500000
     },
     {
-      "id": "5fee7e61-b6d4-4635-bc2a-1b47193217fa",
-      "routineId": "18f1c07d-a35f-49b5-b23e-afd96c7107a9",
+      "id": "cdbf5572-be02-41c4-bf24-7930d5f84d05",
+      "routineId": "8db76aaa-23f7-4b97-b333-be81d3ce44d6",
       "routineName": "Delegated waiter",
       "prompt": "Wait for delegations",
       "durationMinutes": 30,
@@ -1226,8 +1226,8 @@
       "finishedAt": 1789336500000
     },
     {
-      "id": "79ae6421-86f4-4dca-a991-d127d9a04a7e",
-      "routineId": "51c03d12-3889-492b-a515-4c7789874851",
+      "id": "482b79f9-986a-4f42-a7d7-698647ed7995",
+      "routineId": "ee9c2e28-e319-40e2-a498-692037e40e3a",
       "routineName": "Group cutoff",
       "prompt": "Stop the room",
       "durationMinutes": 30,
@@ -1248,8 +1248,8 @@
       "error": "The assigned room was deleted"
     },
     {
-      "id": "df789d8e-54c0-449d-9a0f-02235a1649bb",
-      "routineId": "d025de32-7ae5-4765-9d2f-55050b2310c5",
+      "id": "b6314bda-5643-4811-a0ca-9f6d2f30a41e",
+      "routineId": "b6f3ff59-3e55-4291-b1b2-bc6d1fe6e4c5",
       "routineName": "Continuity carrier",
       "prompt": "Carry the report forward",
       "durationMinutes": 30,
@@ -1266,8 +1266,8 @@
       "startedAt": 1789337100000
     },
     {
-      "id": "102aeae9-49d7-4ebf-b338-590368f40338",
-      "routineId": "729b51fa-a1d3-4e58-a06a-7000e79641a7",
+      "id": "6021699d-e1be-421b-b473-aca1a61c8957",
+      "routineId": "9714c121-d793-4d17-bc5f-9f768cd0f1d5",
       "routineName": "Late catcher",
       "prompt": "Catch up work",
       "durationMinutes": 30,
@@ -1284,8 +1284,8 @@
       "startedAt": 1789337100000
     },
     {
-      "id": "f93dc0ad-3630-4922-8c28-f568593901e9",
-      "routineId": "59d9adcf-a418-4b35-ac1e-3da7c5197e15",
+      "id": "5567a824-117d-46e4-a55c-32b26fa79ed0",
+      "routineId": "3747b52c-a925-487f-b8fc-2cf367f6464b",
       "routineName": "Health check",
       "prompt": "Check the fixtures",
       "durationMinutes": 30,
@@ -1302,8 +1302,8 @@
       "startedAt": 1789337100000
     },
     {
-      "id": "e3df9784-abe6-40e9-b2ca-091809c09fbc",
-      "routineId": "09951c89-5da7-430a-adfb-c5cde9e761a5",
+      "id": "47e20aae-eb57-41bd-8d63-515b26d0d412",
+      "routineId": "a291e859-e333-49b2-bc1c-c2a6c0741cf4",
       "routineName": "Failing dispatch",
       "prompt": "This dispatch fails at the bridge",
       "durationMinutes": 30,
@@ -1322,8 +1322,8 @@
       "finishedAt": 1789337700000
     },
     {
-      "id": "c4d43d89-7567-41a3-8ec5-3f8634735f33",
-      "routineId": "df146914-37c0-418e-8172-43ff327fb7a5",
+      "id": "241637b2-c324-4dc3-98a0-2590ad18ccae",
+      "routineId": "2e5fa076-78e8-4a0e-9db7-bd7965b519c0",
       "routineName": "Failing goal dispatch",
       "prompt": "This goal dispatch fails at the bridge",
       "durationMinutes": 30,
@@ -1343,8 +1343,8 @@
       "finishedAt": 1789338300000
     },
     {
-      "id": "333c6e54-46bc-4b36-85d3-97181ea67532",
-      "routineId": "4d60fc59-a5b2-4caf-be45-25b90fe5e385",
+      "id": "72eeddf2-6824-44ea-b2f0-9acbb94ad851",
+      "routineId": "c5e9d25d-35fd-469b-97f5-d29a49883781",
       "routineName": "Capped runner",
       "prompt": "Hit the run limit",
       "durationMinutes": 30,
@@ -1364,8 +1364,8 @@
       "finishedAt": 1789339200000
     },
     {
-      "id": "ba1aa28d-b07a-46d6-8280-37a2efe8e649",
-      "routineId": "4d60fc59-a5b2-4caf-be45-25b90fe5e385",
+      "id": "c69f7065-79fd-45f6-b392-7e2818713f8f",
+      "routineId": "c5e9d25d-35fd-469b-97f5-d29a49883781",
       "routineName": "Capped runner",
       "prompt": "Hit the run limit",
       "durationMinutes": 30,
@@ -1385,8 +1385,8 @@
       "finishedAt": 1789339800000
     },
     {
-      "id": "c78c704e-f863-4477-84d8-f9c2a1f86170",
-      "routineId": "21a5f1e7-7328-4e78-8553-40b0d7227765",
+      "id": "c4f5caca-fa07-49b3-8233-882a022fb57e",
+      "routineId": "ed885a77-ea48-4654-8d04-1134d6553936",
       "routineName": "Morning digest",
       "prompt": "Summarize overnight activity",
       "durationMinutes": 30,
@@ -1403,8 +1403,8 @@
       "finishedAt": 1789339200000
     },
     {
-      "id": "a79595d6-389c-48c9-a0cf-46877f2c2318",
-      "routineId": "3590cea2-5b48-4956-ae2f-dbd96115b5a3",
+      "id": "66541ac1-beeb-499c-9c83-dae22f09bb88",
+      "routineId": "bd9f8692-b19e-451a-899e-cc0c75a3f7e1",
       "routineName": "Stoppable goal",
       "prompt": "Pause then stop",
       "durationMinutes": 30,
@@ -1424,8 +1424,8 @@
       "finishedAt": 1789339800000
     },
     {
-      "id": "a5408b06-15e3-4311-b3f8-84254c4a74d6",
-      "routineId": "4d60fc59-a5b2-4caf-be45-25b90fe5e385",
+      "id": "95b88935-8cba-47d0-a239-b3be8e1cf475",
+      "routineId": "c5e9d25d-35fd-469b-97f5-d29a49883781",
       "routineName": "Capped runner",
       "prompt": "Hit the run limit",
       "durationMinutes": 30,
@@ -1448,19 +1448,19 @@
     {
       "webhookId": "wh-1",
       "deliveryId": "d-1",
-      "runId": "b3727d90-3e95-4840-9a2a-1ed200d9af3a",
+      "runId": "181c5158-6fd5-4bdc-9899-10921307a7de",
       "acceptedAt": 1789333800000
     },
     {
       "webhookId": "wh-1",
       "deliveryId": "d-2",
-      "runId": "85092560-765c-4f9e-8ee5-abd76740958d",
+      "runId": "1712ebf4-867c-4609-9dc6-eecd8aafa93f",
       "acceptedAt": 1789333800000
     },
     {
       "webhookId": "wh-1",
       "deliveryId": "d-3",
-      "runId": "6e1c68ca-a887-490e-a0b7-5f933ba805b5",
+      "runId": "f14f2e94-ca10-4a56-a83f-048985989f32",
       "acceptedAt": 1789333800000
     }
   ]
