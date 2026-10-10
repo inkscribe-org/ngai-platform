@@ -9,7 +9,7 @@ import { once } from "node:events";
 import { createServer, request, type Server } from "node:http";
 import { connect, type Socket } from "node:net";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { DatabaseSync } from "node:sqlite";
@@ -22,6 +22,7 @@ import {
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { z } from "zod";
 
+import { resolveJacBinary } from "./jac-binary.ts";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 import { startFakeHttpMcp } from "./testing/fake-http-mcp-server.ts";
 import { startFakeOAuth } from "./testing/fake-oauth-server.ts";
@@ -37,6 +38,7 @@ import {
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(SERVER_DIR, "..");
+const JAC_BIN = resolveJacBinary(process.env);
 const FAKE_CLAUDE_CLI = join(SERVER_DIR, "testing", "fake-claude-cli.ts");
 const FAKE_MCP_SERVER = join(SERVER_DIR, "testing", "fake-mcp-server.ts");
 const PORT = 18800 + Math.floor(Math.random() * 10_000);
@@ -1197,6 +1199,11 @@ beforeAll(async () => {
       // the real CLI runs Manual for these even when asked for auto
       FAKE_CLAUDE_AUTO_UNAVAILABLE_MODELS: "claude-haiku-4-5",
       OMB_TEST_INTERNAL_CAPABILITY_KEY: TEST_CAPABILITY_KEY,
+      // The Jac harness (routines, webhooks, drivers): HOME is redirected
+      // above, so resolve the pinned jacup binary from the real one, and
+      // reuse the operator's jac runtime extraction + Postgres socket dir.
+      ...(JAC_BIN ? { OMB_JAC_BIN: JAC_BIN } : {}),
+      XDG_CACHE_HOME: process.env.XDG_CACHE_HOME || join(homedir(), ".cache"),
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -1214,7 +1221,17 @@ beforeAll(async () => {
     if (child.exitCode !== null) throw new Error(`server exited ${child.exitCode}. stderr:\n${stderr}`);
     await new Promise((r) => setTimeout(r, 150));
   }
-}, 30_000);
+  // The Jac sidecar (routines, webhooks) boots in the background; its
+  // routes answer 503 until it is live. Wait once here so no single test
+  // spends its own budget on the harness boot.
+  if (JAC_BIN) {
+    const jacDeadline = Date.now() + 150_000;
+    while ((await fetch(`${BASE}/api/routines`).then((res) => res.status, () => 0)) !== 200) {
+      if (Date.now() > jacDeadline) throw new Error(`jac harness never came up. stderr:\n${stderr}`);
+      await new Promise((r) => setTimeout(r, 250));
+    }
+  }
+}, 180_000);
 
 afterAll(async () => {
   boatStub?.close();

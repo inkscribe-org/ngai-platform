@@ -1,8 +1,8 @@
 #!/usr/bin/env -S node --experimental-strip-types
 // Thin, agent-friendly CLI over the same guarded MCP operations exposed to
 // external clients. It deliberately owns no second API client or wait loop.
-import { spawn, execFileSync, type ChildProcess } from "node:child_process";
-import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { spawn, type ChildProcess } from "node:child_process";
+import { closeSync, mkdirSync, mkdtempSync, openSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -12,6 +12,7 @@ import { handleToolCall, request, validateBaseUrl } from "./mcp-server.ts";
 import { launchUi, runControlOmbUi } from "./testing/control-omb-ui.ts";
 import { removeTempDir, waitForExit } from "../server/testing/cleanup.ts";
 import { freePortBlock } from "../server/testing/ports.ts";
+import { resolveJacBinary } from "../server/jac-binary.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 /** Deterministic name for the seeded starter bot of a verification fixture,
@@ -415,36 +416,7 @@ export function verificationServerEnvironment(parentEnv: NodeJS.ProcessEnv, data
   return childEnv;
 }
 
-/** The `jac` executable a fixture server could spawn: OMB_JAC_BIN as
- * given, else the newest jacup install, else `jac` on the caller's PATH.
- * Never throws — a sealed or bare PATH simply means "not available". */
-export function resolveJacBinary(env: NodeJS.ProcessEnv): string | null {
-  const explicit = env.OMB_JAC_BIN?.trim();
-  if (explicit) return explicit;
-  try {
-    const versionsDir = join(homedir(), ".local", "share", "jacup", "versions");
-    const versions = readdirSync(versionsDir)
-      .filter((entry) => /^\d+\.\d+\.\d+/.test(entry))
-      .sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
-    // The harness pins its compiler (jac/harness/jac.toml jac-version); a
-    // different jacup version compiles a different prepare-cache slot and
-    // recompiles from scratch on every sidecar boot. Prefer the pinned one.
-    try {
-      const toml = readFileSync(join(ROOT, "jac", "harness", "jac.toml"), "utf8");
-      const pinned = toml.match(/^jac-version\s*=\s*"(\d+\.\d+\.\d+)"/m)?.[1];
-      if (pinned && versions.includes(pinned)) return join(versionsDir, pinned, "jac");
-    } catch { /* missing toml falls through to newest */ }
-    for (const version of versions) {
-      const candidate = join(versionsDir, version, "jac");
-      if (existsSync(candidate)) return candidate;
-    }
-  } catch { /* no jacup install */ }
-  try {
-    const found = execFileSync("which", ["jac"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], env }).trim();
-    if (found) return found.split("\n", 1)[0]!;
-  } catch { /* `which` missing or jac absent */ }
-  return null;
-}
+export { resolveJacBinary };
 
 /** Whether a verification server would actually get a Jac routines
  * harness: the seam is on (OMB_JAC unset or not "0") and a binary can be

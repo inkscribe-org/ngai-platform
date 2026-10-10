@@ -3924,6 +3924,9 @@ def _guard(omb_token: any) -> any {
 
 def _invoke(omb_token: any, fn: any) -> any{
     g = _guard(omb_token);
+    if g is not None {
+        return g;
+    }
     try {
         _ensure_booted();
         return fn();

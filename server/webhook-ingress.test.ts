@@ -1,6 +1,3 @@
-import { mkdtempSync, rmSync, statSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
@@ -8,56 +5,79 @@ import {
   listenWebhookIngress,
   MAX_WEBHOOK_BODY_BYTES,
   webhookCredential,
+  type WebhookEvent,
   type WebhookIngress,
+  type WebhookReceiver,
 } from "./webhook-ingress.ts";
-import { WebhookManager } from "./webhooks.ts";
 import { WorkspaceBackupMaintenance } from "./workspace-backup-maintenance.ts";
 
-let dir: string;
+// Transport-only fake: the manager semantics (dedup, verification capture,
+// rolling 401 record, rejection bookkeeping) are pinned by
+// jac/harness/webhooks.test.jac against the real Jac implementation.
+interface FakeReceiver extends WebhookReceiver {
+  queued: WebhookEvent[];
+  rejected: Array<{ status: number; reason: string }>;
+  unauthorized: number;
+}
+
+function fakeReceiver(endpoint: string, key: string): FakeReceiver {
+  const seen = new Map<string, string>();
+  const receiver: FakeReceiver = {
+    queued: [],
+    rejected: [],
+    unauthorized: 0,
+    authorize: async (endpointId, secret) => {
+      const ok = endpointId === endpoint && secret === key;
+      if (!ok) receiver.unauthorized += 1;
+      return ok;
+    },
+    receive: async (_endpointId, _secret, event) => {
+      const prior = event.deliveryId ? seen.get(event.deliveryId) : undefined;
+      if (prior) return { runId: prior, deliveryId: event.deliveryId!, duplicate: true };
+      receiver.queued.push(event);
+      const runId = `run-${receiver.queued.length}`;
+      if (event.deliveryId) seen.set(event.deliveryId, runId);
+      return { runId, deliveryId: event.deliveryId ?? runId, duplicate: false };
+    },
+    recordRejected: async (_endpointId, status, reason) => {
+      receiver.rejected.push({ status, reason });
+    },
+  };
+  return receiver;
+}
+
 let ingress: WebhookIngress;
-let endpointId: string;
-let secret: string;
-let manager: WebhookManager;
-const queued: Array<Record<string, unknown>> = [];
+const endpointId = "wh_testendpoint";
+const secret = "whsec_test/secret";
+let manager: FakeReceiver;
 
 beforeAll(async () => {
-  dir = mkdtempSync(join(tmpdir(), "omb-webhook-ingress-"));
-  manager = new WebhookManager({
-    file: join(dir, "webhooks.json"),
-    botState: () => "ready",
-    enqueue: (input) => {
-      queued.push(input);
-      return { id: `run-${queued.length}` };
-    },
-  });
-  const created = manager.create({ name: "Build event", prompt: "Review the build", botId: "maus-1" });
-  endpointId = created.webhook.endpointId;
-  secret = created.secret;
+  manager = fakeReceiver(endpointId, secret);
   ingress = await listenWebhookIngress(manager, { port: 0 });
 });
 
 afterAll(async () => {
   await new Promise<void>((resolve) => ingress.server.close(() => resolve()));
-  rmSync(dir, { recursive: true, force: true });
 });
 
 describe("webhook-only ingress", () => {
   it("does not record or enqueue incoming webhooks during workspace backup", async () => {
     const gate = new WorkspaceBackupMaintenance();
     const guarded = await listenWebhookIngress(manager, { port: 0, claimRequest: () => gate.request() });
-    const before = manager.listAttempts();
-    const beforeQueued = queued.length;
+    const beforeQueued = manager.queued.length;
+    const beforeUnauthorized = manager.unauthorized;
     try {
       await gate.run(async () => {
-        const response = await fetch(`${guarded.baseUrl}/hooks/${endpointId}/${secret}`, { method: "POST", body: "{}" });
+        const response = await fetch(`${guarded.baseUrl}/hooks/${endpointId}/${encodeURIComponent(secret)}`, { method: "POST", body: "{}" });
         expect(response.status).toBe(503);
-        expect(manager.listAttempts()).toEqual(before);
-        expect(queued).toHaveLength(beforeQueued);
+        expect(manager.queued).toHaveLength(beforeQueued);
+        expect(manager.unauthorized).toBe(beforeUnauthorized);
       }, { idle: () => true, pause: () => {}, resume: () => {}, flush: async () => {} });
     } finally {
       await new Promise<void>((resolve) => guarded.server.close(() => resolve()));
     }
   });
+
   it("exposes health but nothing from the main OpenMausBot API", async () => {
     const health = await fetch(`${ingress.baseUrl}/health`);
     expect(health.status).toBe(200);
@@ -65,7 +85,7 @@ describe("webhook-only ingress", () => {
     expect((await fetch(`${ingress.baseUrl}/api/bots`)).status).toBe(404);
   });
 
-  it("accepts capability URLs and deduplicates retries", async () => {
+  it("accepts capability URLs and passes delivery metadata through", async () => {
     const credential = webhookCredential(ingress.baseUrl, endpointId, secret);
     const send = () => fetch(credential.url, {
       method: "POST",
@@ -76,130 +96,52 @@ describe("webhook-only ingress", () => {
     expect(first.status).toBe(202);
     expect(await first.json()).toMatchObject({ accepted: true, duplicate: false, runId: "run-1" });
     const retry = await send();
-    expect(retry.status).toBe(202);
     expect(await retry.json()).toMatchObject({ accepted: true, duplicate: true, runId: "run-1" });
-    expect(queued).toHaveLength(1);
-    expect(queued[0]?.prompt).toContain("Event: push");
+    expect(manager.queued[0]).toMatchObject({
+      payload: { ref: "main", id: "event-in-body" },
+      contentType: "application/json",
+      eventName: "push",
+      deliveryId: "delivery-1",
+    });
   });
 
-  it("also accepts a bearer secret without putting it in the URL", async () => {
+  it("also accepts a bearer secret and parses form bodies", async () => {
     const response = await fetch(`${ingress.baseUrl}/hooks/${endpointId}`, {
       method: "POST",
       headers: { authorization: `Bearer ${secret}`, "content-type": "application/x-www-form-urlencoded" },
       body: "ticket=42&priority=high",
     });
     expect(response.status).toBe(202);
-    expect(queued.at(-1)?.prompt).toContain('"ticket": "42"');
+    expect(manager.queued.at(-1)?.payload).toEqual({ ticket: "42", priority: "high" });
   });
 
-  it("does not deduplicate separate requests that reuse a generic payload id", async () => {
-    const credential = webhookCredential(ingress.baseUrl, endpointId, secret);
-    const before = queued.length;
-    const send = () => fetch(credential.url, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ id: "shared-record", task: "Handle this update" }),
-    });
-    expect((await send()).status).toBe(202);
-    expect((await send()).status).toBe(202);
-    expect(queued).toHaveLength(before + 2);
-  });
-
-  it("captures a verification event without queueing work", async () => {
-    const created = manager.create({ name: "Verify", prompt: "", botId: "maus-1", enabled: false, verificationPending: true });
-    const before = queued.length;
-    const response = await fetch(webhookCredential(ingress.baseUrl, created.webhook.endpointId, created.secret).url, {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-webhook-event": "support.created" },
-      body: JSON.stringify({ task: "Triage ticket 42" }),
-    });
-    expect(response.status).toBe(202);
-    expect(await response.json()).toMatchObject({ accepted: true, captured: true });
-    expect(queued).toHaveLength(before);
-    expect(manager.list().find((webhook) => webhook.id === created.webhook.id)).toMatchObject({ verificationPending: false, enabled: false });
-  });
-
-  it("rejects invalid credentials, malformed JSON and oversized bodies", async () => {
+  it("rejects invalid credentials before reading the body, and records malformed JSON and oversized bodies", async () => {
+    const before = manager.unauthorized;
     const unauthorized = await fetch(`${ingress.baseUrl}/hooks/${endpointId}/wrong`, { method: "POST", body: "{}" });
     expect(unauthorized.status).toBe(401);
+    expect(manager.unauthorized).toBe(before + 1);
 
-    const malformed = await fetch(`${ingress.baseUrl}/hooks/${endpointId}/${secret}`, {
+    const malformed = await fetch(`${ingress.baseUrl}/hooks/${endpointId}/${encodeURIComponent(secret)}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: "{",
     });
     expect(malformed.status).toBe(400);
 
-    const oversized = await fetch(`${ingress.baseUrl}/hooks/${endpointId}/${secret}`, {
+    const oversized = await fetch(`${ingress.baseUrl}/hooks/${endpointId}/${encodeURIComponent(secret)}`, {
       method: "POST",
       headers: { "content-type": "text/plain" },
       body: "x".repeat(MAX_WEBHOOK_BODY_BYTES + 1),
     });
     expect(oversized.status).toBe(413);
-    expect(manager.listAttempts().filter((attempt) => attempt.webhookId === manager.list().find((webhook) => webhook.endpointId === endpointId)?.id && attempt.outcome === "rejected").length).toBeGreaterThanOrEqual(3);
+    expect(manager.rejected.map((entry) => entry.status)).toEqual([400, 413]);
   });
-});
 
-describe("requests with a wrong secret", () => {
   it("answers a malformed escape in the URL secret with 401, not 500", async () => {
     const response = await fetch(`${ingress.baseUrl}/hooks/${endpointId}/%E0%A4%A`, { method: "POST", body: "{}" });
     expect(response.status).toBe(401);
     expect(await response.json()).toEqual({ error: "Invalid webhook URL or secret" });
   });
-
-  it("neither evicts real deliveries nor rewrites the file for each request", async () => {
-    const floodDir = mkdtempSync(join(tmpdir(), "omb-webhook-flood-"));
-    const file = join(floodDir, "webhooks.json");
-    const emitted = new Set<string>();
-    let runs = 0;
-    const flooded = new WebhookManager({
-      file,
-      botState: () => "ready",
-      enqueue: () => ({ id: `flood-run-${++runs}` }),
-      emit: (frame) => { if (frame.kind === "webhook.attempt") emitted.add(frame.attempt.id); },
-    });
-    const created = flooded.create({ name: "CI", prompt: "Review", botId: "maus-1" });
-    const receiver = await listenWebhookIngress(flooded, { port: 0 });
-    const url = `${receiver.baseUrl}/hooks/${created.webhook.endpointId}`;
-    const deliver = (id: string) => fetch(url, {
-      method: "POST",
-      headers: { authorization: `Bearer ${created.secret}`, "content-type": "application/json", "idempotency-key": id },
-      body: "{}",
-    });
-    try {
-      expect((await deliver("real-1")).status).toBe(202);
-      const written = statSync(file);
-      // More bad requests than the shared history holds (2,000).
-      for (let i = 0; i < 2_100; i += 1) {
-        const response = await fetch(url, { method: "POST", headers: { authorization: "Bearer wrong" }, body: "" });
-        expect(response.status).toBe(401);
-        await response.arrayBuffer();
-      }
-      // The file was not written again.
-      const after = statSync(file);
-      expect([after.ino, after.mtimeMs]).toEqual([written.ino, written.mtimeMs]);
-
-      const attempts = flooded.listAttempts();
-      expect(attempts.filter((attempt) => attempt.outcome === "accepted").map((attempt) => attempt.deliveryId)).toEqual(["real-1"]);
-      const rejected = attempts.filter((attempt) => attempt.outcome === "rejected");
-      expect(rejected).toHaveLength(1);
-      expect(rejected[0]).toMatchObject({ statusCode: 401, reason: "Invalid webhook URL or secret (2100 requests)" });
-      // Clients get one record, updated in place, not 2,100 new ones.
-      expect(emitted.size).toBe(2);
-
-      // The rolling record is saved with the next real change.
-      expect((await deliver("real-2")).status).toBe(202);
-      const reloaded = new WebhookManager({ file, botState: () => "ready", enqueue: () => ({ id: "unused" }) });
-      expect(reloaded.listAttempts().map((attempt) => [attempt.outcome, attempt.statusCode])).toEqual([
-        ["accepted", 202],
-        ["rejected", 401],
-        ["accepted", 202],
-      ]);
-    } finally {
-      await new Promise<void>((resolve) => receiver.server.close(() => resolve()));
-      rmSync(floodDir, { recursive: true, force: true });
-    }
-  }, 60_000);
 });
 
 describe("advertised base URL", () => {

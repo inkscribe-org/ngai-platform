@@ -160,3 +160,36 @@ Learned during the phase-0 spike (`jac/spike/`); keep updated as we hit more:
     `os.killpg(pid, sig)` fails E1053 on the int param (route the
     int through a nested def); reserved words beyond the documented
     set: `entry`, `own`, `obj`, `root`.
+## 8. Porting a phase-4 subsystem (recipe, from webhooks 2026-10-10)
+
+Webhooks (`jac/harness/webhooks.jac` + `server/jac-webhooks.ts`) is the
+reference port. For each subsystem:
+
+- **Jac module** `jac/harness/<name>.jac`: faithful port of the TS manager.
+  Same on-disk files byte-for-byte where feasible (`_js_pretty` from
+  routines.jac = `JSON.stringify(_, null, 2)`; tmp + `os.replace`, mode
+  0600). Module state in one `glob _x: dict[str, any]` mutated via
+  `.update()` / item assignment. Every TS options callback becomes an entry
+  in a hook table (`_x["hooks"]`): node-side callbacks are bridge ops
+  (`routines._bridge(op, {snake_case...})`), Jac-side ones are direct calls
+  (e.g. webhooks → `routines._enqueue_webhook`). Errors are
+  `_fail(status, msg)` (empty Exception subclass + `setattr(err, "status")`).
+  zod messages: reproduce zod 4's first issue text (`path message`), probe
+  real strings with a throwaway node script before porting.
+- **HTTP surface**: `def:pub <name>_<op>(…, omb_token: any = None)` wrapped
+  in `_invoke` (guard → fn → `{ok:false,status,error}`); re-bind each on
+  `harness.jac` as a glob. Optional kwargs: type-check before use (fused
+  binary stringifies omitted defaults).
+- **Tests** `jac/harness/<name>.test.jac` (annex, no self-import): port the
+  TS test invariants against fake hooks. `jac run` type-checks annexes
+  too — a checker error in a test file breaks harness boot.
+- **Node seam** `server/jac-<name>.ts`: async facade over `jacOp`, plus a
+  sync mirror fed by emit frames (routines' `emit` bridge op forwards
+  non-routine frames to each mirror) for call sites that cannot await.
+  Transport that must stay in node until phase 5 (HTTP listeners) talks to
+  the facade through a narrow interface.
+- **Delete** the TS manager and its unit tests; keep shared wire types in
+  `shared/`. `index.test.ts` end-to-end tests exercise the real harness
+  (its `beforeAll` waits for `/api/routines` to answer 200).
+- Validate: `jac check` + `jac test` on the pin (0.37.21), `tsc -p
+  tsconfig.server.json`, affected vitest files, one live `jac run` smoke.

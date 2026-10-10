@@ -348,3 +348,27 @@ glob driver_state: any = _drivers_driver_state;
 import from driver_claude {
     _create as _claude_driver_create,
 }
+
+# --- webhooks module HTTP surface --------------------------------------------
+import from webhooks {
+    webhook_list as _webhooks_webhook_list,
+    webhook_create as _webhooks_webhook_create,
+    webhook_update as _webhooks_webhook_update,
+    webhook_remove as _webhooks_webhook_remove,
+    webhook_rotate as _webhooks_webhook_rotate,
+    webhook_disable_for_bot as _webhooks_webhook_disable_for_bot,
+    webhook_receive as _webhooks_webhook_receive,
+    webhook_authorize as _webhooks_webhook_authorize,
+    webhook_test as _webhooks_webhook_test,
+    webhook_record_rejected as _webhooks_webhook_record_rejected,
+}
+glob webhook_list: any = _webhooks_webhook_list;
+glob webhook_create: any = _webhooks_webhook_create;
+glob webhook_update: any = _webhooks_webhook_update;
+glob webhook_remove: any = _webhooks_webhook_remove;
+glob webhook_rotate: any = _webhooks_webhook_rotate;
+glob webhook_disable_for_bot: any = _webhooks_webhook_disable_for_bot;
+glob webhook_receive: any = _webhooks_webhook_receive;
+glob webhook_authorize: any = _webhooks_webhook_authorize;
+glob webhook_test: any = _webhooks_webhook_test;
+glob webhook_record_rejected: any = _webhooks_webhook_record_rejected;

@@ -506,7 +506,7 @@ import { connectorAccessDecision, describeConnectorScopes, normalizeConnectorSco
 import { bindThreadLogCapProvider } from "./thread-log-rotation.ts";
 import { listenWebhookIngress, webhookCredential, type WebhookIngress } from "./webhook-ingress.ts";
 import { assertModelVariantSupported, memberTurnSelection } from "./member-turn.ts";
-import { WebhookManager } from "./webhooks.ts";
+import { jacWebhookReceiver, jacWebhooks, webhookMirrorApplyFrame } from "./jac-webhooks.ts";
 import type { WebhookTrigger } from "../shared/webhooks.ts";
 import { SPAWNED_PROXIES } from "./proxy-paths.ts";
 import {
@@ -11311,7 +11311,33 @@ const bridgeRun = (payload: BridgePayload): RoutineRun => payload.run as Routine
 const routineBridgeOps: Record<string, (payload: BridgePayload) => unknown> = {
   // Mirror first: the bridge handler is inside an in-flight op and may not
   // re-enter the serialized op queue (server/jac-routines.ts).
-  emit: (payload) => { const frame = payload.payload as Record<string, unknown>; mirrorApplyFrame(frame); broadcast(frame); return { ok: true }; },
+  emit: (payload) => {
+    const frame = payload.payload as Record<string, unknown>;
+    if (!mirrorApplyFrame(frame)) webhookMirrorApplyFrame(frame);
+    broadcast(frame);
+    return { ok: true };
+  },
+  // delivery:"post" webhooks land in a dedicated "Updates" task, never
+  // bot.threadId (the bot's currently-selected task). Fixes
+  // https://github.com/milind-soni/OpenMausBot/issues/2071: a post used to
+  // land wherever the owner (or another automation) had last switched
+  // that bot's selection, including a live conversation.
+  webhook_post: (payload) => {
+    const botId = bridgeString(payload.botId);
+    if (store.bot(botId)) {
+      store.appendMessage(bridgeString(payload.threadId), { role: "bot", kind: "text", text: bridgeString(payload.text), webhookPost: true });
+    }
+    return { ok: true };
+  },
+  // Create-on-first-use, never activated (so it never steals the bot's
+  // live selection the way POST /api/bots/:id/tasks does), reused forever
+  // after via the trigger's resultsThreadId.
+  webhook_post_thread: (payload) => {
+    const existing = bridgeString(field(payload, "resultsThreadId", "results_thread_id"));
+    const forceNew = payload.force_new === true || payload.forceNew === true;
+    if (!forceNew && existing) return { threadId: existing };
+    return { threadId: store.createTask(bridgeString(payload.botId), "Updates", false)?.threadId ?? null };
+  },
   // Drivers in the Jac harness emit RuntimeEvents through this op; the shim
   // adapter's listeners (the EventBus attach) see them exactly as an
   // in-process adapter's events.
@@ -12397,38 +12423,15 @@ function resolveAndSendModel(
 }
 
 // Webhook definitions are independent from calendar schedules, but every
-// delivery joins the same RoutineManager queue. That keeps unattended work
-// ordered behind a busy MAUS and gives webhook runs the same durable receipts.
-const webhooks = new WebhookManager({
-  emit: broadcast,
-  botState: unattendedDispatchState,
-  enqueue: (input) => routines.enqueueWebhook(input),
-  findRun: (webhookId, deliveryId) => routines.webhookRunReceipt(webhookId, deliveryId),
-  cancelQueued: (webhookId, message) => routines.cancelQueuedWebhook(webhookId, message),
-  pendingRuns: (webhookId) => routines.activeWebhookRunCount(webhookId),
-  // delivery:"post" webhooks land in a dedicated "Updates" task, never
-  // bot.threadId (the bot's currently-selected task) -- see
-  // resolvePostThread below. Fixes
-  // https://github.com/milind-soni/OpenMausBot/issues/2071: a post used to
-  // land wherever the owner (or another automation) had last switched
-  // that bot's selection, including a live conversation.
-  post: (botId, threadId, text) => {
-    if (!store.bot(botId)) return;
-    store.appendMessage(threadId, { role: "bot", kind: "text", text, webhookPost: true });
-  },
-  // Create-on-first-use, never activated (so it never steals the bot's
-  // live selection the way POST /api/bots/:id/tasks does), reused forever
-  // after via trigger.resultsThreadId.
-  resolvePostThread: (trigger, forceNew) => {
-    if (!forceNew && trigger.resultsThreadId) return trigger.resultsThreadId;
-    return store.createTask(trigger.botId, "Updates", false)?.threadId;
-  },
-});
+// delivery joins the same routines queue. Both live in the Jac harness
+// (jac/harness/webhooks.jac calls routines.jac in-process); node keeps the
+// ingress transport, a sync read mirror, and the two bridge ops below.
+const webhooks = jacWebhooks;
 
 let webhookIngress: WebhookIngress | null = null;
 let webhookIngressError: string | null = null;
 try {
-  webhookIngress = await listenWebhookIngress(webhooks, {
+  webhookIngress = await listenWebhookIngress(jacWebhookReceiver, {
     port: WEBHOOK_PORT, publicBaseUrl: WEBHOOK_PUBLIC_URL,
     claimRequest: () => workspaceMaintenance.request(),
   });
@@ -19441,7 +19444,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       return json(res, 200, { webhooks: shownHooks, attempts: webhooks.listAttempts().filter((attempt) => visible.everything || shownIds.has(attempt.webhookId)), ingress: webhookIngressStatus() });
     }
     if (path === "/api/webhooks" && method === "POST") {
-      const created = webhooks.create(await readBody(req));
+      const created = await webhooks.create(await readBody(req));
       const ingress = webhookIngressStatus();
       return json(res, 201, {
         webhook: created.webhook,
@@ -19455,7 +19458,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         const result = await webhooks.test(webhookMatch[1], await readBody(req));
         return result ? json(res, 202, result) : json(res, 404, { error: "no such webhook" });
       }
-      const rotated = webhooks.rotateSecret(webhookMatch[1]);
+      const rotated = await webhooks.rotateSecret(webhookMatch[1]);
       if (!rotated) return json(res, 404, { error: "no such webhook" });
       const ingress = webhookIngressStatus();
       return json(res, 200, {
@@ -25677,6 +25680,7 @@ server.listen(PORT, "127.0.0.1", async () => {
   // fail-in-place run recoveries its emits carry — can land before any
   // client request is accepted.
   const jacUrl = await startJacRoutines();
+  if (jacUrl) await webhooks.start().catch((error) => console.error(`webhooks: mirror load failed: ${error instanceof Error ? error.message : String(error)}`));
   // The library reads routine state through the synchronous mirror, so it
   // initializes whether or not the harness answered — an empty mirror is
   // its cold-start truth either way.

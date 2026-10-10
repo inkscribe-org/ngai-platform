@@ -2,11 +2,35 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { z } from "zod";
 
 import { parseJson, type JsonValue } from "./schema.ts";
-import type { WebhookManager } from "./webhooks.ts";
 
 export const MAX_WEBHOOK_BODY_BYTES = 256 * 1024;
 const statusErrorSchema = z.object({ status: z.number().int().optional() });
 const serverAddressSchema = z.object({ port: z.number().int().min(1).max(65_535) });
+
+export interface WebhookEvent {
+  payload: JsonValue;
+  contentType?: string;
+  eventName?: string;
+  userAgent?: string;
+  deliveryId?: string;
+}
+
+export interface WebhookReceiveResult {
+  runId?: string;
+  deliveryId: string;
+  duplicate: boolean;
+  captured?: boolean;
+  ignored?: boolean;
+}
+
+/** What the listener needs from the webhooks subsystem (jac/harness/
+ * webhooks.jac behind server/jac-webhooks.ts). `authorize` records the
+ * rolling wrong-secret attempt itself when it answers false. */
+export interface WebhookReceiver {
+  authorize(endpointId: string, secret: string, event: Partial<WebhookEvent>): Promise<boolean>;
+  receive(endpointId: string, secret: string, event: WebhookEvent): Promise<WebhookReceiveResult>;
+  recordRejected(endpointId: string, statusCode: number, reason: string, event: Partial<WebhookEvent>): Promise<void>;
+}
 
 export interface WebhookIngress {
   server: Server;
@@ -88,7 +112,7 @@ function eventName(req: IncomingMessage): string | undefined {
   )?.trim() || undefined;
 }
 
-export function createWebhookIngressHandler(manager: WebhookManager, claimRequest?: () => () => void) {
+export function createWebhookIngressHandler(manager: WebhookReceiver, claimRequest?: () => () => void) {
   return async (req: IncomingMessage, res: ServerResponse) => {
     const url = new URL(req.url ?? "/", "http://localhost");
     if (req.method === "GET" && url.pathname === "/health") {
@@ -108,14 +132,12 @@ export function createWebhookIngressHandler(manager: WebhookManager, claimReques
         // A malformed escape is not a secret this server issued.
       }
       // Reject bad capability URLs before buffering or parsing attacker input.
-      if (!manager.authorize(match[1], secret)) {
-        manager.recordUnauthorized(match[1], {
-          contentType: header(req, "content-type"),
-          eventName: eventName(req),
-          deliveryId: deliveryId(req),
-        });
-        return json(res, 401, { error: "Invalid webhook URL or secret" });
-      }
+      const authorized = await manager.authorize(match[1], secret, {
+        contentType: header(req, "content-type"),
+        eventName: eventName(req),
+        deliveryId: deliveryId(req),
+      });
+      if (!authorized) return json(res, 401, { error: "Invalid webhook URL or secret" });
       const raw = await readRawBody(req);
       const contentType = header(req, "content-type")?.split(";")[0]?.trim().toLowerCase() ?? "text/plain";
       const payload = parsePayload(raw, contentType);
@@ -135,11 +157,12 @@ export function createWebhookIngressHandler(manager: WebhookManager, claimReques
       // payload. Receiver-level failures happen earlier, so record metadata
       // here without buffering untrusted data a second time.
       if (status === 400 || status === 413) {
-        manager.recordRejected(match[1], status, message, {
+        // Best-effort bookkeeping: the sender still gets the real status.
+        await manager.recordRejected(match[1], status, message, {
           contentType: header(req, "content-type"),
           eventName: eventName(req),
           deliveryId: deliveryId(req),
-        });
+        }).catch(() => {});
       }
       return json(res, status, { error: message });
     } finally {
@@ -167,7 +190,7 @@ export function advertisedWebhookBase(raw: string): string {
 }
 
 export async function listenWebhookIngress(
-  manager: WebhookManager,
+  manager: WebhookReceiver,
   options: { host?: string; port: number; publicBaseUrl?: string; claimRequest?: () => () => void },
 ): Promise<WebhookIngress> {
   const host = options.host ?? "127.0.0.1";

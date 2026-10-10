@@ -10,15 +10,16 @@
 // that awaited an op would deadlock behind the op that is awaiting it),
 // and the async facade every other node call site uses.
 
-import { spawn, execFileSync, type ChildProcess } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { createServer } from "node:http";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { DATA_DIR } from "./config.ts";
+import { resolveJacBinary } from "./jac-binary.ts";
 import type {
   Routine,
   RoutineRun,
@@ -48,28 +49,6 @@ let jacToken: string | null = null;
 export function jacBridgeToken(): string {
   jacToken ??= process.env.OMB_JAC_TOKEN?.trim() || randomBytes(32).toString("hex");
   return jacToken;
-}
-
-/** The `jac` executable: explicit OMB_JAC_BIN first, then the newest
- * jacup-installed version, then whatever `jac` resolves to on PATH. */
-function resolveJacBin(): string | null {
-  const explicit = process.env.OMB_JAC_BIN?.trim();
-  if (explicit) return explicit;
-  try {
-    const versionsDir = join(homedir(), ".local", "share", "jacup", "versions");
-    const versions = readdirSync(versionsDir)
-      .filter((entry) => /^\d+\.\d+\.\d+/.test(entry))
-      .sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
-    for (const version of versions) {
-      const candidate = join(versionsDir, version, "jac");
-      if (existsSync(candidate)) return candidate;
-    }
-  } catch { /* no jacup install */ }
-  try {
-    const found = execFileSync("which", ["jac"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
-    if (found) return found.split("\n", 1)[0]!;
-  } catch { /* PATH may be sealed in verification fixtures */ }
-  return null;
 }
 
 /**
@@ -135,10 +114,14 @@ function logUnavailableOnce(reason: string): void {
   console.error(`routines: ${reason} — routine routes will answer 503`);
 }
 
+/** Children whose spawn itself failed (bad binary path): no exit event ever
+ * fires, so health polling must check this instead of exitCode alone. */
+const spawnFailed = new WeakSet<ChildProcess>();
+
 async function waitForHealth(url: string, child: ChildProcess): Promise<boolean> {
   const deadline = Date.now() + HEALTH_TIMEOUT_MS;
   while (Date.now() < deadline) {
-    if (child.exitCode !== null) return false;
+    if (child.exitCode !== null || spawnFailed.has(child)) return false;
     try {
       // /function/health answers before the harness finishes compiling its
       // endpoint table; a real def is only routed once the app is live.
@@ -156,7 +139,7 @@ async function waitForHealth(url: string, child: ChildProcess): Promise<boolean>
 }
 
 async function spawnHarness(): Promise<string | null> {
-  const bin = resolveJacBin();
+  const bin = resolveJacBinary();
   if (!bin) {
     logUnavailableOnce("no jac binary found (set OMB_JAC_BIN or install jacup)");
     return null;
@@ -189,6 +172,13 @@ async function spawnHarness(): Promise<string | null> {
   });
   jacChild = child;
   let output = "";
+  // A bad binary path is an 'error' event, not a throw: unhandled, it would
+  // take the whole node process down.
+  child.once("error", (error) => {
+    spawnFailed.add(child);
+    output = `${output}${error.message}\n`.slice(-4_000);
+    if (jacChild === child) jacChild = null;
+  });
   child.stdout?.on("data", (chunk) => { output = `${output}${chunk}`.slice(-4_000); });
   child.stderr?.on("data", (chunk) => {
     output = `${output}${chunk}`.slice(-4_000);
