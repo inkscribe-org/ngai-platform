@@ -245,6 +245,15 @@ core turn pipeline on the runtime.
 6. ~~Client migration~~ **decided 2026-10-07**: `src/` ports to Jac `cl`
    JSX in phase 6 — a committed rewrite, per-subtree, on the wire
    contract until each subtree's cutover, then Jac RPC.
+9. **Delegated decisions (2026-10-10, made by the planner on request;
+   see impl plan §17 for reasons):** hosted tier — port voice/live/TTS,
+   Boat/VPS computers and the phone proxy after the desktop app ships;
+   SaaS-only pieces (cloud home/lending/move, fleet, tunnel, Caddy, custom
+   domain, tailscale, hosted Slack/models) leave the desktop app and are
+   re-homed onto the headless Jac image later. Remote environments are
+   redesigned as a "connect to server" mode. The jac pin is bumped to the
+   latest stable at the start of A1. npm-only engines (pi, minimax,
+   gemini) are bring-your-own. One workspace root.
 8. ~~Persistence~~ **decided 2026-10-10**: the Jac graph store on
    Postgres is the source of truth (persistent OSP). Today's JSON/sqlite
    files become import/export formats (one-time importer for existing

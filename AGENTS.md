@@ -299,7 +299,9 @@ bot_node` return the right node).
 
 ## 10. Where the migration goes next
 
-`docs/plans/2026-10-10-jac-implementation-plan.md` is the execution plan:
+`docs/plans/2026-10-10-jac-implementation-plan.md` (final v1, all decisions
+resolved — §17) is the execution plan; "Start here" at the top lists the
+first steps:
 end state is one jac-desktop app (no node, no Electron); phases A–H with
 per-workstream scope, acceptance and dependencies; the upstream
 jaseci-labs/jac issues that gate the desktop shell (§14). New work ports

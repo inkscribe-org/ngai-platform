@@ -1,5 +1,10 @@
 # Jac migration — detailed implementation plan (from 2026-10-10 onward)
 
+**Status: final v1 (2026-10-10).** All product decisions resolved (§17).
+Next: Phase A (start with the pin bump and A1) and Phase B in parallel —
+see "Start here" below. Changes from here on are made in the PR that
+changes the status (§15) and noted in the decision log.
+
 Companion to `2026-10-07-jac-migration.md` (the "why" and the decision log).
 This document is the "how, in what order, and when is it done". It is
 written so that each workstream (§6–§13b) can be handed to one engineer or
@@ -36,6 +41,21 @@ marked ~.
   §14 and the migration plan's defect ledger.
 - Status of each workstream is tracked in the table in §15; update it in
   the same PR that changes the status.
+
+---
+
+### Start here (first steps, in order)
+1. Bump the jac pin to the latest stable (§17 #5); green CI on PR #1 with it
+   (`jac-warm`, conformance, golden).
+2. Phase B in parallel: B1 (fixture env — clears ~95 CI failures), B3
+   (computer-claim regressions), B4 (docs + dead code), B5 (static serving),
+   B6 (routine failures), B8 (Windows CI for sv).
+3. A1 desktop topology spike, then the A2 graph-store spike against its
+   thresholds; U2 upstream PRs (#9959, #9944, #9946) as soon as each is
+   reproduced on the new pin.
+4. A3 (node-free helpers + native engine installs) and A4 (event feed) in
+   parallel with A2.
+5. Then C0 → C1 → C2-model → G1 → C3 per §5's critical path.
 
 ---
 
@@ -325,7 +345,7 @@ Phase E  Client into Jac cl                              E0..E9  (needs C-feeds:
 Phase F  Desktop shell, companion, enterprise, release   F1..F7  (needs A1, upstream §14)
 Phase X  Cross-cutting (observability, a11y, telemetry, docs) X1..X4 (alongside C–F)
             │
-Phase G  Hosted tier: re-scope or port                   G1..G3  (decision-gated)
+Phase G  Hosted tier: G1 now; G3 user-facing after F2; G4 SaaS after F6
             │
 Phase H  Decommission node/Electron/seams; CI rewrite    H1..H4
 ```
@@ -1133,7 +1153,7 @@ inventory; upstream issue numbers in §14):
 
 ---
 
-## 12. Phase G — hosted tier (decision-gated)
+## 12. Phase G — hosted tier
 
 - 11,542 LOC deferred (boat, vps, cloud-home/owner/lending/move, fleet,
   tunnel, caddy, custom-domain, tailscale, voice/live calls/TTS, phone
@@ -1143,9 +1163,14 @@ inventory; upstream issue numbers in §14):
   `create_task` bridge op, `included-services.ts` used by decider/tts,
   `cloud-home.ts` imported by codex and opencode-go). Without these, C3
   cannot drop the hosted branches cleanly.
-- **G2 (decision):** for each hosted feature: port, keep on a separate TS
-  server, or drop. Record in §17.
-- **G3:** execute G2.
+- **G2 (decided — §17 #3):** port the user-facing hosted features; move
+  the server-only SaaS pieces off the desktop app.
+- **G3 (after F2):** port voice/live calls/TTS, Boat and VPS cloud
+  computers, the phone proxy — each as its own workstream with the C-style
+  brief (scope from the 2026-10-10 inventory; done when its TS is deleted).
+- **G4 (after F6):** re-home cloud home/owner/lending/move, fleet, tunnel,
+  Caddy, custom domain, tailscale, hosted Slack/models onto the headless
+  Jac image; until then hosted deployments run the last TS release.
 
 ---
 
@@ -1279,6 +1304,7 @@ Profiling findings are tracked as #9959 (per-request Postgres setup —
 | A4 | Event feed prototype | not started | | |
 | A5 | Compile cost | partial (CI warm cache + mtime pin done) | | #1 |
 | A6 | Platform policy | decided: no Electron fallback; Windows via upstream PRs | product | |
+| — | All §17 decisions | resolved 2026-10-10 | | |
 | U1 | Upstream Windows (+ Intel macOS) desktop support | planned after F2 | | |
 | B1 | e2e fixture env | not started | | |
 | B2 | Windows/mac CI shards | not started | | |
@@ -1302,7 +1328,9 @@ Profiling findings are tracked as #9959 (per-request Postgres setup —
 | E2–E9 | Client feature areas (E3, E4, E6, E7 split into sub-PRs of ≤3k LOC) | not started | | |
 | E10 | `window.ogb` replacement map (§19) | not started | | |
 | F1–F7 | Desktop, companion, enterprise, release, CLI/distribution, cloud clients | not started | | |
-| G1–G3 | Hosted tier | not started | | |
+| G1 | Hosted extension points | not started | | |
+| G3 | Voice/live/TTS, Boat/VPS computers, phone proxy | after F2 | | |
+| G4 | SaaS pieces onto the headless Jac image | after F6 | | |
 | H1–H4 | Decommission | not started | | |
 
 Shims in flight (must be deleted by the named WS): the node↔Jac seam
@@ -1331,33 +1359,60 @@ E2–E9 (per area).
 
 ---
 
-## 17. Decisions needed from product
+## 17. Decisions (all resolved 2026-10-10)
 
-1. ~~A6 platform policy~~ **decided 2026-10-10:** no Electron fallback;
-   Windows/Intel macOS via our upstream PRs (WS-U1).
-2. ~~A2 persistence~~ **decided 2026-10-10:** the Jac graph store on
-   Postgres is the source of truth (persistent OSP); files become
-   import/export formats (C2a, C2b).
-3. **G2 hosted tier** — per feature: port / separate TS server / drop
-   (boat, VPS, cloud home/lending/move, fleet, tunnel, custom domain,
-   voice/live calls/TTS, phone).
-4. **Remote environments** (desktop window loading a remote server's UI) —
-   keep, redesign, or drop for the Jac app.
-5. **Pin bump — decide before A1** — stay on 0.37.21, or move to 0.37.25+
-   (fixes the dict-slot narrowing quirk and likely the stringified-default
-   defect; fixes for #9959/#9944/#9946 will only land on newer versions;
-   costs a full re-verification).
-6. ~~Wire source of truth~~ **decided 2026-10-10: Jac only, no zod.** Jac
-   `obj` types are the single definition; TS consumers get generated
-   types (E0).
-7. ~~Node for engines~~ **decided 2026-10-10: engines must not need node**
-   — native installs only (A3 table). Still open: what to do with engines
-   that only ship as npm packages — **piAgent** (and our TS extension that
-   runs inside it), **minimax** (`mmx-cli`), **geminiAgent** (gemini-cli):
-   drop them, keep them as bring-your-own (the user installs the CLI; the
-   app never touches node), or ask the vendors for native builds.
-8. **Roots/principals** (A2(h)) — proposed: one workspace root, access
-   control in our code.
+Decisions 1, 2, 6 and the core of 7 were made by the product owner;
+3, 4, 5, 8 and the npm-engine part of 7 were delegated to and made by the
+planner on 2026-10-10 ("make decisions") — each with its reason, so any of
+them can be revisited deliberately.
+
+1. **Platforms (A6):** no Electron fallback; Windows/Intel macOS via our
+   upstream PRs (WS-U1).
+2. **Persistence (A2):** the Jac graph store on Postgres is the source of
+   truth (persistent OSP); files become import/export formats (C2a, C2b).
+3. **Hosted tier (G2)** — *delegated:*
+   - **Port after F2 (G3):** voice/live calls/TTS (11 server files + 15
+     client files; user-facing in the app), Boat and VPS cloud computers
+     (surface mounts in turns; extension points from G1), the phone
+     companion/phone proxy (F3).
+   - **Leave the desktop app; re-home onto the headless Jac image later
+     (G4):** cloud home/owner/lending/move, fleet (+fleet-cli), tunnel,
+     Caddy, custom domain, tailscale, hosted Slack, hosted models,
+     account email sign-in for hosted servers. These serve the hosted SaaS
+     deployment (Docker image), not the desktop; existing hosted
+     deployments stay on the last TS release (frozen, security fixes only)
+     until G4 ships them on the headless Jac image.
+   - **Reason:** keeps the critical path (desktop app) free of ~6k LOC of
+     server-only code while keeping every feature a desktop user sees.
+4. **Remote environments** — *delegated:* **redesign.** The Jac app gets a
+   "connect to server" mode in the `cl` UI that points the API base and
+   the event feed at a paired remote headless Jac server (same wire,
+   generated client, pairing via C1); the webview never navigates
+   off-origin. Built in F1 once F6's headless server exists. **Reason:**
+   navigating the webview to a remote origin would lose the `/__jac/`
+   bridge and the desktop plugins; a base-URL switch keeps both.
+5. **Jac pin** — *delegated:* **bump to the latest stable jac at the start
+   of A1** (0.37.25 or newer), re-verify everything in CI (`jac-warm`,
+   conformance, golden), drop the workarounds it makes obsolete (AGENTS §7
+   quirks); afterwards bump deliberately whenever a U2 fix we need lands.
+   **Reason:** A1/A2 numbers and every upstream fix we depend on (#9944,
+   #9946, #9959) only exist on newer versions; measuring on an old pin
+   would be wasted work.
+6. **Wire contract:** Jac only, no zod (E0).
+7. **Engines without node:** native installs only (A3). *Delegated part —*
+   npm-only engines **piAgent, minimax (`mmx-cli`), geminiAgent
+   (gemini-cli): bring-your-own.** The app detects a CLI the user installed
+   themselves and uses it; it never installs node or the CLI, and shows
+   the vendor's install instructions instead of an install button. pi's
+   extension ships as an engine-side asset that pi loads (it is pi's
+   plugin, not app code). These three come last in D2. **Reason:** no node
+   in our app, and no current user loses an engine.
+8. **Roots/principals (A2(h))** — *delegated:* **one workspace root**;
+   every walker binds to it explicitly; access control (owner, members,
+   paired devices, companion, CLI) stays in our code (C1 visibility rules);
+   Jac's per-user roots and `__guest__` fallback are not used. **Reason:**
+   per-user roots would partition one shared workspace and break member
+   visibility semantics that today's product relies on.
 
 ---
 
