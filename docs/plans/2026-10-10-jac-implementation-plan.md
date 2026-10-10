@@ -138,9 +138,12 @@ app/
   processes engines need (permission proxy, MCP gate, agents MCP, hooks,
   connector proxy, computer bridges) must stop being node scripts (WS-D3).
 - **Platforms:** jac-desktop supports **Linux and macOS (arm64) only** in
-  code today; Windows and Intel macOS are blocked upstream (§14). The
-  Electron app keeps shipping to Windows/Intel-mac users until that lands
-  (WS-F4 bridge strategy).
+  code today. **No Electron fallback (decided 2026-10-10):** Windows and
+  Intel macOS reach the Jac app by us contributing that support upstream
+  (WS-U1, §14 #9943). Much of the groundwork exists upstream (a PE/COFF
+  linker in the native backend, Windows host detection); the gaps are the
+  WebView2 desktop host, a Windows runtime artifact, and Windows support in
+  the Postgres helper.
 
 ### 2.2 OSP model (target)
 
@@ -391,14 +394,16 @@ on a disposable machine/VM, not on the shared dev box.
 - Delete `emoji_rgi.jac` generation from the compiled set if it can be
   data (3,830 generated lines) — load a JSON table at runtime instead.
 
-### A6. Platform policy (decided by product; recorded here)
-- jac-desktop builds/runs only on Linux and macOS arm64 (upstream main,
-  2026-10-10); Windows and Intel macOS need upstream #9943.
-- **Working assumption:** retire Electron per platform. Linux + Apple
-  Silicon move to the Jac app first; Windows and Intel macOS stay on the
-  Electron app (frozen except security fixes) until #9943 lands. The
-  Electron app keeps talking to the same on-disk data format (A2 option 1),
-  so a later switch is a binary swap.
+### A6. Platform policy (decided 2026-10-10)
+- jac-desktop builds/runs only on Linux and macOS arm64 today (upstream
+  main); Windows and Intel macOS need upstream work (#9943).
+- **Decision: no Electron fallback.** Electron is retired, not kept alive
+  per platform. Windows (and Intel macOS) support is driven upstream
+  through our own PRs (WS-U1), scheduled after the Linux/Apple Silicon app
+  works. Until those PRs land, the Jac app ships on Linux and Apple
+  Silicon only; existing Windows/Intel-mac Electron installs are not
+  updated further (their data dir stays readable by the Jac app — A2
+  option 1 — so moving them later is a fresh install, no migration).
 
 ---
 
@@ -416,9 +421,10 @@ on a disposable machine/VM, not on the shared dev box.
   failures; remaining failures listed with causes.
 
 ### B2. Windows/macOS CI shards
-- They have no jac. Until Windows has a Jac app (A6), mark harness-needing
-  e2e tests `skipIf(!jacAvailable())` on those runners, with a counter in
-  the CI summary so the skipped set stays visible.
+- They have no jac. Until WS-U1 lands, mark harness-needing e2e tests
+  `skipIf(!jacAvailable())` on those runners, with a counter in the CI
+  summary so the skipped set stays visible; drop the Windows/mac vitest
+  matrix entries entirely once the node server is retired (H4).
 
 ### B3. Computer-claim regressions
 - Behavior evals `lazy-claim-rejection`, `lazy-claim-screenless`,
@@ -441,8 +447,8 @@ on a disposable machine/VM, not on the shared dev box.
 ### B5. Static file serving audit
 - `serveStatic` strips `..` with a regex only (index.ts:15955). Write a
   test with encoded/overlapping traversal sequences; fix by resolving and
-  checking the prefix. (Replaced by the desktop host later, but node still
-  ships to Windows users per A6.)
+  checking the prefix. (Replaced by the desktop host later; fix it now
+  because the node server ships until H.)
 
 ### B6. Pre-existing routine failures
 - The 3 routine `index.test.ts` failures that predate the webhooks port;
@@ -852,8 +858,9 @@ inventory; upstream issue numbers in §14):
   2. downloads + verifies the Jac app, installs it, migrates the
      single-instance/deep-link registration, and launches it;
   3. leaves the data dir untouched (same formats — A2).
-- Windows / Intel macOS: per A6, not until #9943; those users keep the
-  Electron app.
+- Windows / Intel macOS: no bridge release until WS-U1 lands (A6); then
+  the same bridge flow (secrets migration needs the Electron-side decrypt,
+  so the Windows bridge release ships from the last Electron build).
 - Legacy updater mirror (`openmausbot-releases` for builds ≤ 0.1.46)
   carries the bridge release too.
 
@@ -892,8 +899,9 @@ inventory; upstream issue numbers in §14):
 
 - H1: delete `server/index.ts` and every `server/jac-*.ts` seam,
   `routineBridgeOps`, mirrors, `jacOp*`, harness supervision.
-- H2: delete `electron/` (except the frozen Windows/Intel-mac line per A6)
-  and electron-builder packaging for migrated platforms.
+- H2: delete `electron/` and electron-builder packaging (no fallback line
+  — A6). Keep only what the Windows/Intel-mac bridge release (F4) needs,
+  on a release branch, until WS-U1 ships.
 - H3: delete `src/`, the node build (`bundle-server.mjs`, tsconfig.server),
   and node-only tests; `shared/` keeps only what Workers/docs need.
 - H4: CI rewrite: Jac app build + `jac test` + UI e2e against the app;
@@ -901,11 +909,43 @@ inventory; upstream issue numbers in §14):
   `apps/docs` jobs (they stay TS per the migration plan).
 
 ---
+## 13a. Phase U — upstream contributions we own
+
+### U1. Windows (and Intel macOS) for jac-desktop — our PRs to jaseci-labs/jac
+Evidence (upstream main, 2026-10-10): the native backend already has a
+COFF/PE linker (`jaclang/compiler/backends/native/pe_linker.jac`) and
+`toolchains/host.jac` recognises Windows; what is missing:
+1. **WebView2 desktop host** — `toolchains/system.jac ensure_desktop_host`
+   raises for non-Linux/macOS; add the Windows branch: WebView2 SDK/loader
+   provisioning, build of the webview library (webview.h supports WebView2)
+   with MSVC or clang-cl, the host's Windows message loop.
+2. **Windows runtime artifact** — the desktop build grafts the runtime from
+   the running `jac` binary; jaseci publishes no Windows `jac`. Needs the
+   Windows build of the fused runtime in jaseci's release pipeline (and the
+   Intel-mac build, broken per #8805).
+3. **Postgres helper on Windows** — `data/impl/pgembed.impl.jac`
+   `_platform_slug` knows only Linux/Darwin and locks with `fcntl`; add the
+   `windows-amd64` zonky slug and a Windows file lock (`msvcrt.locking`).
+   May be moot for us if A2 keeps the desktop host off the graph store —
+   confirm in A1 whether the host boots without Postgres.
+4. Path/data-dir and process differences surfaced by our app (process
+   groups → job objects for engine CLIs, `killpg` → `TerminateJobObject`).
+- **Process:** AGENTS §3 — minimal repro per gap, feature branch off
+  upstream main, tests, PRs against jaseci-labs/jac; track here and in
+  #9943. Our own app code must be Windows-clean as we write it (no POSIX-
+  only calls without a Windows branch) so the app is ready when U1 lands.
+- **When:** after F2 (the Linux/Apple Silicon app ships). Requires the
+  `workflow` token scope for pushing to the fork (see #9934 note).
+- **Done when:** `jac build --platform windows` of our app produces a
+  working binary in CI on a Windows runner, upstream PRs merged.
+
+---
+
 ## 14. Upstream dependency map (jaseci-labs/jac)
 
 | Issue | Gap | Blocks | Workaround while open |
 |---|---|---|---|
-| #9943 | Windows (WebView2) + Intel macOS desktop hosts | F2/F4 on those platforms | Electron line stays for them (A6) |
+| #9943 | Windows (WebView2) + Intel macOS desktop hosts | F2/F4 on those platforms | **we implement it upstream (WS-U1)**; no Electron fallback (A6) |
 | #9944 | bundled/offline, per-app embedded DB | A2 option 2 | files + sqlite (A2 option 1) |
 | #9945 | app-supplied native capability plugins | many F1 rows | sv-side Python where possible |
 | #9946 | release build may omit colocated service apps | A1, all of C in the shipped app | A1 topology options (b)–(d) |
@@ -947,7 +987,8 @@ relevant if A2 keeps us off the graph store, still worth filing.
 | A3 | Helper processes without node | not started | | |
 | A4 | Event feed prototype | not started | | |
 | A5 | Compile cost | partial (CI warm cache + mtime pin done) | | #1 |
-| A6 | Platform policy | proposed (§6) | product | |
+| A6 | Platform policy | decided: no Electron fallback; Windows via upstream PRs | product | |
+| U1 | Upstream Windows (+ Intel macOS) desktop support | planned after F2 | | |
 | B1 | e2e fixture env | not started | | |
 | B2 | Windows/mac CI shards | not started | | |
 | B3 | Computer-claim regressions + room race | not started | | |
@@ -978,7 +1019,7 @@ contract duplicate → C11; dual store/message-db writers → C2.
 | Compile time grows with every port (~148 s CI cold today; minutes locally) | slow dev loop, CI cost | A5; keep annexes lean; data-ify generated modules; upstream double-compile issue |
 | `cl` has no DOM test harness | UI regressions | UI e2e suite against the loopback origin (E0) |
 | No WebSocket in the embedded backend | noVNC viewer, webhook listener | sv raw listeners; #9948 |
-| Windows/Intel-mac users stranded on Electron | two codebases for longer | freeze Electron line; shared data format; #9943 |
+| Windows/Intel-mac users have no Jac app until our upstream PRs land | a platform gap, no fallback | WS-U1 scheduled right after F2; shared data format makes the later move a fresh install |
 | Electron-only secrets (safeStorage) | lost credentials on switch | F4 bridge release migrates them |
 | Hosted code interleaved into core | C3 stalls | G1 extension points first |
 | Agent-written ports diverge in style/helpers | rework | §3 conventions, `common.jac`, review checklist per PR |
@@ -988,8 +1029,8 @@ contract duplicate → C11; dual store/message-db writers → C2.
 
 ## 17. Decisions needed from product
 
-1. **A6 platform policy** — confirm: Linux + Apple Silicon first; Windows
-   and Intel macOS stay on Electron until #9943.
+1. ~~A6 platform policy~~ **decided 2026-10-10:** no Electron fallback;
+   Windows/Intel macOS via our upstream PRs (WS-U1).
 2. **A2 persistence** — confirm files + sqlite remain the source of truth.
 3. **G2 hosted tier** — per feature: port / separate TS server / drop
    (boat, VPS, cloud home/lending/move, fleet, tunnel, custom domain,

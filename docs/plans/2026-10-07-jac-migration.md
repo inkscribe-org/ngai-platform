@@ -189,11 +189,12 @@ core turn pipeline on the runtime.
   - **ours to port**: the CUA/local-computer native helpers and their
     spawn/signing, the managed-companion guardian, the shared-terminal and
     browser-engine sidecars — reachable from sv code as subprocesses.
-  - **platforms**: `--platform` lists windows/macos/linux, but jaseci's
-    jac 0.37 releases ship the `jac` toolchain binary for Linux x86_64/arm64
-    and macOS arm64 only (no Windows, no Intel macOS) — confirm that
-    building and running a Windows/Intel-macOS desktop app works before
-    retiring Electron there.
+  - **platforms** (decided 2026-10-10: **no Electron fallback**):
+    jac-desktop builds/runs on Linux and macOS arm64 only today; Windows
+    and Intel macOS support will be contributed upstream by us (impl plan
+    WS-U1, jaseci-labs/jac#9943) — the native backend already has a PE/COFF
+    linker; missing are the WebView2 host, a Windows runtime artifact and
+    Windows support in the Postgres helper.
 - **CI**: `ci.yml` shards gain a Jac job (jac tests + conformance suite);
   existing Vitest suites keep gating unchanged behavior until their
   subsystem's implementation is deleted, then the obsolete tests are
