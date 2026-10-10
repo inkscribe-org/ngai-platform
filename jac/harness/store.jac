@@ -45,6 +45,15 @@ import unicodedata;
 import from copy { deepcopy }
 import from db { DATA_DIR }
 import from jsutil { js_string, js_stringify }
+# JS undefined, JSON.stringify(_, null, 2), server/atomic.ts and
+# shared/redact.ts (re-exported under their port names).
+import from common {
+    UNDEF,
+    js_pretty as _js_pretty,
+    write_file_atomic,
+    redact_mask as mask,
+    redact_secrets_in_text,
+}
 import from messages {
     read_thread, read_thread_tail, append_message, update_message,
     insert_message, set_active_leaf, import_thread, delete_thread,
@@ -56,17 +65,8 @@ import from emoji_rgi { RGI_HEX, SINGLES_HEX }
 
 # ── JS interop ──────────────────────────────────────────────────────────
 
-# Sentinel for JavaScript `undefined`: distinct from None (JSON null).
-class _Undefined {
-    # Falsy like JS undefined.
-    def __bool__(self: any) -> bool {
-        return False;
-    }
-}
-
-# An instance is falsy (JS undefined is falsy in boolean contexts).
-glob UNDEF: any = _Undefined(),
-    _emoji_state: dict[str, any] = {"rgi": None, "singles": None};
+# UNDEF (common): the JavaScript `undefined` sentinel, distinct from None.
+glob _emoji_state: dict[str, any] = {"rgi": None, "singles": None};
 
 # JS strips its own whitespace set in trim() and matches it in \s.
 glob _JS_WS: str = (
@@ -177,100 +177,7 @@ def _call_method(target: any, name: str, args: list[any]) -> any {
 }
 
 
-def _js_pretty(value: any, level: int = 0) -> str {
-    # JSON.stringify(value, null, 2): objects and arrays spread over
-    # lines, primitives via the jsutil byte-exact writers.
-    if isinstance(value, dict) {
-        # JSON.stringify drops own keys whose value is undefined.
-        items = [(k, v) for (k, v) in value.items() if v is not UNDEF];
-        if not items {
-            return "{}";
-        }
-        gap = "  " * (level + 1);
-        base = "  " * level;
-        parts: list[str] = [];
-        for (k, v) in items {
-            parts.append(gap + js_string(str(k)) + ": " + _js_pretty(v, level + 1));
-        }
-        return "{\n" + ",\n".join(parts) + "\n" + base + "}";
-    }
-    if isinstance(value, (list, tuple)) {
-        if not value {
-            return "[]";
-        }
-        gap = "  " * (level + 1);
-        base = "  " * level;
-        parts: list[str] = [];
-        for v in value {
-            parts.append(gap + _js_pretty(v if v is not UNDEF else None, level + 1));
-        }
-        return "[\n" + ",\n".join(parts) + "\n" + base + "]";
-    }
-    if value is UNDEF {
-        # An undefined array element serializes as null.
-        return "null";
-    }
-    return js_stringify(value);
-}
-
-
-# ── atomic.ts ───────────────────────────────────────────────────────────
-
-glob RENAME_RETRY_DELAYS_MS: list[any] = [5, 10, 20, 40, 80],
-    _RETRYABLE_RENAME_ERRNOS: any = frozenset({1, 13, 16});  # EPERM EACCES EBUSY
-
-
-def _rename_with_retry(tmp: str, path: str) -> None {
-    attempt = 0;
-    while True {
-        try {
-            os.replace(tmp, path);
-            return;
-        } except OSError as e {
-            if e.errno not in _RETRYABLE_RENAME_ERRNOS or attempt >= len(RENAME_RETRY_DELAYS_MS) {
-                raise;
-            }
-            time.sleep(RENAME_RETRY_DELAYS_MS[attempt] / 1000);
-        }
-        attempt += 1;
-    }
-}
-
-
-def write_file_atomic(path: str, data: str, mode: (int | None) = None, durable: bool = True) -> None {
-    # writeFileAtomic: sibling temp file, fsync, rename over the target.
-    # The mode is applied to the temporary inode so a broader-permission
-    # file is never visible between write and rename.
-    tmp = f"{path}.{os.getpid()}.{uuid.uuid4()}.tmp";
-    fd: any = None;
-    try {
-        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, (mode if mode is not None else 0o666));
-        payload = data.encode("utf-8");
-        offset = 0;
-        while offset < len(payload) {
-            offset += os.write(fd, payload[offset:]);
-        }
-        if durable {
-            os.fsync(fd);
-        }
-        os.close(fd);
-        fd = None;
-        _rename_with_retry(tmp, path);
-    } except Exception {
-        if fd is not None {
-            try {
-                os.close(fd);
-            } except Exception {
-            }
-        }
-        try {
-            os.unlink(tmp);
-        } except Exception {
-        }
-        raise;
-    }
-}
-
+# ── atomic.ts (write_file_atomic lives in common) ───────────────────────
 
 def _holds_exactly(path: str, data: str, mode: (int | None)) -> bool {
     # True only when `path` is already exactly `data`: a regular file,
@@ -606,96 +513,6 @@ def same_model_selection(a: any, b: any) -> bool {
         and _js_strict_eq(a.get("effort", UNDEF), b.get("effort", UNDEF))
         and _js_strict_eq(a.get("variant", UNDEF), b.get("variant", UNDEF))
     );
-}
-
-
-# ── shared/redact.ts (content-shaped secrets) ──────────────────────────
-# Ported with re.ASCII so Python's \b uses JS's ASCII word boundary; the
-# one \s is written against the JS whitespace set explicitly.
-
-glob _REDACTION_MARKER: any = re.compile(r"^«redacted \d+ chars»\Z", re.ASCII),
-    _PEM_BLOCK: any = re.compile(
-        r"(-----BEGIN [A-Z ]*PRIVATE KEY-----)([\s\S]*?)(-----END [A-Z ]*PRIVATE KEY-----)",
-        re.ASCII
-    ),
-    _KEY_PREFIXES: list[any] = [
-        re.compile(r"\bom[dg]_[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])", re.ASCII),
-        re.compile(r"\bsk-(?:ant-|proj-|live-|test-)?[A-Za-z0-9_-]{16,}", re.ASCII),
-        re.compile(r"\bxai-[A-Za-z0-9_-]{20,}", re.ASCII),
-        re.compile(r"\bgsk_[A-Za-z0-9]{40,}", re.ASCII),
-        re.compile(r"\bcsk-[A-Za-z0-9]{32,}", re.ASCII),
-        re.compile(r"\bhf_[A-Za-z0-9]{30,}", re.ASCII),
-        re.compile(r"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}", re.ASCII),
-        re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}", re.ASCII),
-        re.compile(r"\bxox[abposr]-[A-Za-z0-9-]{20,}", re.ASCII),
-        re.compile(r"\bAKIA[0-9A-Z]{16}\b", re.ASCII),
-        re.compile(r"\bAIza[0-9A-Za-z_-]{30,}", re.ASCII),
-        re.compile(r"\bnpm_[A-Za-z0-9]{20,}", re.ASCII),
-        re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b", re.ASCII),
-    ],
-    _BEARER: any = re.compile(
-        r"(\bBearer" + _JS_S_CLASS + r"+)([A-Za-z0-9._~+/=-]{12,})", re.ASCII
-    ),
-    _KEY_VALUE: any = re.compile(
-        r"\b((?:[A-Za-z0-9_-]*_)?(?:api[_-]?key|apikey|secret|token|password|passwd|authorization|auth[_-]?token|access[_-]?key|private[_-]?key)s?)"
-        r"([\"']?" + _JS_S_CLASS + r"*[=:]" + _JS_S_CLASS + r"*)([\"']?)([A-Za-z0-9._~+/=-]{8,})\3",
-        re.ASCII | re.IGNORECASE
-    ),
-    _KEY_SUFFIX_ASSIGNMENT: any = re.compile(
-        r"\b([A-Za-z][A-Za-z0-9_-]*[_-]key)s?(=)([\"']?)([A-Za-z0-9._~+/=-]+)\3",
-        re.ASCII | re.IGNORECASE
-    ),
-    _SECRET_FLAG: any = re.compile(
-        r"(--(?:token|password|passwd|api-key|apikey|secret|access-key|auth-token)(?:=|" + _JS_S_CLASS + r"+))([\"']?)(?!-)([A-Za-z0-9._~+/=-]+)\2",
-        re.ASCII | re.IGNORECASE
-    ),
-    _URL_USERINFO: any = re.compile(
-        r"(\b[a-z][a-z0-9+.-]*://[^\s/:@'\"]+:)([^\s/@'\"«»]+)(@)",
-        re.ASCII | re.IGNORECASE
-    );
-
-
-def mask(value: str) -> str {
-    # Keep repeated redaction byte-for-byte stable.
-    if _REDACTION_MARKER.match(value) {
-        return value;
-    }
-    return f"«redacted {_js_len(value)} chars»";
-}
-
-
-def redact_secrets_in_text(text: any) -> any {
-    if not isinstance(text, str) or _js_len(text) < 8 {
-        return text;
-    }
-    def pem_sub(m: any) -> str {
-        return m.group(1) + "\n" + mask(_js_trim(m.group(2))) + "\n" + m.group(3);
-    }
-    def mask_sub(m: any) -> str {
-        return mask(m.group(0));
-    }
-    def bearer_sub(m: any) -> str {
-        return m.group(1) + mask(m.group(2));
-    }
-    def kv_sub(m: any) -> str {
-        return m.group(1) + m.group(2) + m.group(3) + mask(m.group(4)) + m.group(3);
-    }
-    def flag_sub(m: any) -> str {
-        return m.group(1) + m.group(2) + mask(m.group(3)) + m.group(2);
-    }
-    def userinfo_sub(m: any) -> str {
-        return m.group(1) + mask(m.group(2)) + m.group(3);
-    }
-    out = _PEM_BLOCK.sub(pem_sub, text);
-    for pattern in _KEY_PREFIXES {
-        out = pattern.sub(mask_sub, out);
-    }
-    out = _BEARER.sub(bearer_sub, out);
-    out = _KEY_VALUE.sub(kv_sub, out);
-    out = _KEY_SUFFIX_ASSIGNMENT.sub(kv_sub, out);
-    out = _SECRET_FLAG.sub(flag_sub, out);
-    out = _URL_USERINFO.sub(userinfo_sub, out);
-    return out;
 }
 
 

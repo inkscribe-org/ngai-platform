@@ -48,6 +48,13 @@ import urllib.parse;
 
 import from jsutil { js_stringify }
 import from db { DATA_DIR }
+# shared/redact.ts and server/atomic.ts (re-exported under their port names).
+import from common {
+    redact_mask as mask,
+    redact_secrets_in_text,
+    rename_with_retry,
+    write_file_atomic,
+}
 import from messages {
     index_memory_file, remove_memory_file, indexed_memory_files,
     recall_memory
@@ -136,167 +143,6 @@ def _mkdir_p_mode(dir_: str, mode: int) -> None {
     }
     if not os.path.isdir(dir_) {
         raise NotADirectoryError(errno.ENOTDIR, f"not a directory: {dir_}");
-    }
-}
-
-
-# ── shared/redact.ts ──────────────────────────────────────────────────
-# Byte-identical masking: a credential becomes «redacted N chars» (N in
-# JS UTF-16 units), and the marker itself is never re-masked.
-glob _REDACTION_MARKER: any = re.compile(r"^«redacted \d+ chars»$", re.ASCII);
-
-
-def mask(value: str) -> str {
-    if _REDACTION_MARKER.match(value) {
-        return value;
-    }
-    return f"«redacted {_js_len(value)} chars»";
-}
-
-
-glob _KEY_PREFIXES: list[any] = [
-        re.compile(r"\bom[dg]_[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])", re.ASCII),  # desktop device and model-only credentials
-        re.compile(r"\bsk-(?:ant-|proj-|live-|test-)?[A-Za-z0-9_-]{16,}", re.ASCII),  # anthropic / openai / stripe
-        re.compile(r"\bxai-[A-Za-z0-9_-]{20,}", re.ASCII),  # xai (grok)
-        re.compile(r"\bgsk_[A-Za-z0-9]{40,}", re.ASCII),  # groq
-        re.compile(r"\bcsk-[A-Za-z0-9]{32,}", re.ASCII),  # cerebras
-        re.compile(r"\bhf_[A-Za-z0-9]{30,}", re.ASCII),  # hugging face
-        re.compile(r"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}", re.ASCII),  # github classic
-        re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}", re.ASCII),  # github fine-grained
-        re.compile(r"\bxox[abposr]-[A-Za-z0-9-]{20,}", re.ASCII),  # slack
-        re.compile(r"\bAKIA[0-9A-Z]{16}\b", re.ASCII),  # aws access key id
-        re.compile(r"\bAIza[0-9A-Za-z_-]{30,}", re.ASCII),  # google api key
-        re.compile(r"\bnpm_[A-Za-z0-9]{20,}", re.ASCII),  # npm
-        re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b", re.ASCII),  # jwt
-    ];
-
-
-glob _BEARER: any = re.compile(r"(\bBearer" + _S + r"+)([A-Za-z0-9._~+/=-]{12,})", re.ASCII),
-    _PEM_BLOCK: any = re.compile(r"(-----BEGIN [A-Z ]*PRIVATE KEY-----)([\s\S]*?)(-----END [A-Z ]*PRIVATE KEY-----)"),
-    # key=value / key: value / key="value" where the key is secret-shaped.
-    _KEY_VALUE: any = re.compile(
-        r"\b((?:[A-Za-z0-9_-]*_)?(?:api[_-]?key|apikey|secret|token|password|passwd|authorization|auth[_-]?token|access[_-]?key|private[_-]?key)s?)"
-        r"([\"']?" + _S + r"*[=:]" + _S + r"*)([\"']?)([A-Za-z0-9._~+/=-]{8,})\3",
-        re.IGNORECASE | re.ASCII
-    ),
-    # X_KEY=value: an assignment to a name that ENDS in key is a credential.
-    _KEY_SUFFIX_ASSIGNMENT: any = re.compile(
-        r"\b([A-Za-z][A-Za-z0-9_-]*[_-]key)s?(=)([\"']?)([A-Za-z0-9._~+/=-]+)\3",
-        re.IGNORECASE | re.ASCII
-    ),
-    # --token abc, --password=abc: the flag names a secret.
-    _SECRET_FLAG: any = re.compile(
-        r"(--(?:token|password|passwd|api-key|apikey|secret|access-key|auth-token)(?:=|" + _S + r"+))([\"']?)(?!-)([A-Za-z0-9._~+/=-]+)\2",
-        re.IGNORECASE | re.ASCII
-    ),
-    # scheme://user:secret@host — the password in a URL's userinfo.
-    _URL_USERINFO: any = re.compile(
-        r"(\b[a-z][a-z0-9+.-]*://[^" + _WS_CHARS + r"/:@'\"]+:)([^" + _WS_CHARS + r"/@'\"«»]+)(@)",
-        re.IGNORECASE | re.ASCII
-    );
-
-
-def _pem_mask(m: any) -> str {
-    return m.group(1) + "\n" + mask(_js_trim(m.group(2))) + "\n" + m.group(3);
-}
-
-
-def _mask_match(m: any) -> str {
-    return mask(m.group(0));
-}
-
-
-def _bearer_mask(m: any) -> str {
-    return m.group(1) + mask(m.group(2));
-}
-
-
-def _key_value_mask(m: any) -> str {
-    return m.group(1) + m.group(2) + m.group(3) + mask(m.group(4)) + m.group(3);
-}
-
-
-def _flag_mask(m: any) -> str {
-    return m.group(1) + m.group(2) + mask(m.group(3)) + m.group(2);
-}
-
-
-def _userinfo_mask(m: any) -> str {
-    return m.group(1) + mask(m.group(2)) + m.group(3);
-}
-
-
-def redact_secrets_in_text(text: str) -> str {
-    if not text or _js_len(text) < 8 {
-        return text;
-    }
-    out = _PEM_BLOCK.sub(_pem_mask, text);
-    for re_ in _KEY_PREFIXES {
-        out = re_.sub(_mask_match, out);
-    }
-    out = _BEARER.sub(_bearer_mask, out);
-    out = _KEY_VALUE.sub(_key_value_mask, out);
-    out = _KEY_SUFFIX_ASSIGNMENT.sub(_key_value_mask, out);
-    out = _SECRET_FLAG.sub(_flag_mask, out);
-    out = _URL_USERINFO.sub(_userinfo_mask, out);
-    return out;
-}
-
-
-# ── server/atomic.ts ──────────────────────────────────────────────────
-# Temp-write, fsync, rename-over. Windows rename retries are kept (the
-# harness is POSIX, but the port keeps the same retry table).
-glob _RENAME_RETRY_DELAYS_MS: list[any] = [5, 10, 20, 40, 80],
-    _RETRYABLE_RENAME_CODES: set = set([errno.EPERM, errno.EACCES, errno.EBUSY]);
-
-
-def rename_with_retry(tmp: str, path: str) -> None {
-    attempt = 0;
-    while True {
-        try {
-            os.rename(tmp, path);
-            return;
-        } except OSError as e {
-            if e.errno not in _RETRYABLE_RENAME_CODES or attempt >= len(_RENAME_RETRY_DELAYS_MS) {
-                raise;
-            }
-            time.sleep(_RENAME_RETRY_DELAYS_MS[attempt] / 1000.0);
-        }
-        attempt += 1;
-    }
-}
-
-
-def write_file_atomic(path: str, data: str, mode: (int | None) = None, durable: bool = True) -> None {
-    tmp = f"{path}.{os.getpid()}.{uuid.uuid4()}.tmp";
-    fd: (int | None) = None;
-    try {
-        # Permissions go on the temporary inode itself; the rename
-        # preserves them and never leaves a broader-permission file
-        # visible between write and a later chmod.
-        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, (0o666 if mode is None else mode));
-        view = memoryview(data.encode("utf-8"));
-        while len(view) > 0 {
-            view = view[os.write(fd, view):];
-        }
-        if durable {
-            os.fsync(fd);
-        }
-        os.close(fd);
-        fd = None;
-        rename_with_retry(tmp, path);
-    } except Exception {
-        if fd is not None {
-            try {
-                os.close(fd);
-            } except Exception {
-            }
-        }
-        try {
-            os.unlink(tmp);
-        } except Exception {
-        }
-        raise;
     }
 }
 

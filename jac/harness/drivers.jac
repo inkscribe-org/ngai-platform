@@ -11,12 +11,10 @@ _impls at import; ops dispatch on instance["kind"]. Implemented kinds today:
     node↔Jac adapter contract is verifiable without a real engine.
 """
 
-import os;
-import json;
-import time;
 import threading;
 import uuid;
-import urllib.request;
+
+import from common { guard, iso_now as _now_iso, bridge_url_from_env, bridge_post }
 
 glob _instances: dict[str, any] = {};      # instance_id -> instance record
 glob _impls: dict[str, any] = {};          # kind -> dict of callables
@@ -30,31 +28,23 @@ def driver_register_kind(kind: str, impl_fns: dict[str, any]) {
     _impls[kind] = impl_fns;
 }
 
-def _now_iso -> str {
-    return time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime()) + f".{int(time.time() * 1000) % 1000:03d}Z";
-}
-
 def _new_event_id -> str {
     return f"ev-{uuid.uuid4().hex[:12]}";
 }
 
 def _guard(omb_token: any) -> dict[str, any] {
-    want = os.environ.get("OMB_JAC_TOKEN") or "";
-    if want and omb_token != want {
-        return {"ok": False, "status": 401, "error": "bad token"};
-    }
-    return {"ok": True};
+    g = guard(omb_token, 401, "bad token");
+    return g if g is not None else {"ok": True};
 }
 
 # ── bridge emit (jac -> node), same contract as routines._bridge ───────────
 
 def _resolve_bridge_url -> any {
     if _state["bridge_url"] is None {
-        base = os.environ.get("OMB_ROUTINES_BRIDGE_URL") or os.environ.get("OMB_NODE_URL");
         # 0.37.21 rejects any str stored into a None-initialized glob dict
         # slot (E1001, literal-narrowed per key); dict.update bypasses the
         # subscript-assign narrowing while keeping the None/""/URL semantics.
-        _state.update({"bridge_url": (base.rstrip("/") + "/api/internal/routine-bridge") if base else ""});
+        _state.update({"bridge_url": bridge_url_from_env()});
     }
     return _state["bridge_url"] or None;
 }
@@ -73,23 +63,8 @@ def _bridge(op: str, payload: dict[str, any]) -> dict[str, any] {
         _stub_calls.append(call);
         return {"ok": True};
     }
-    body = json.dumps(call).encode("utf-8");
-    headers = {"content-type": "application/json"};
-    token = os.environ.get("OMB_JAC_TOKEN");
-    if token {
-        headers["x-omb-jac-token"] = token;
-    }
-    req = urllib.request.Request(url, data=body, headers=headers, method="POST");
     try {
-        resp = urllib.request.urlopen(req, timeout=5);
-        try {
-            raw = resp.read().decode("utf-8");
-        } finally {
-            resp.close();
-        }
-        if not raw { return {}; }
-        parsed = json.loads(raw);
-        return parsed if isinstance(parsed, dict) else {};
+        return bridge_post(url, call);
     } except Exception as e {
         # A bridge failure must never crash a turn's event path; the fold
         # degrades to "event lost", same as an in-process listener throwing.

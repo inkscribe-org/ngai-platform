@@ -14,6 +14,7 @@ import json;
 import time;
 import hashlib;
 
+import from common { iso_now, write_file_atomic }
 import from driver_claude_support {
     parse_tool_scope, remote_mcp_spec, spill_dir, node_exec_path, resolve_proxy,
     redact_secrets, server_root, _parse_one_question,
@@ -33,11 +34,6 @@ def data_dir() -> str {
     configured = os.environ.get("OMB_DATA_DIR");
     if configured { return configured; }
     return os.path.join(os.path.expanduser("~"), ".openmausbot");
-}
-
-def iso_now() -> str {
-    now = time.time();
-    return time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(now)) + f".{int(now * 1000) % 1000:03d}Z";
 }
 
 def sha256_hex(value: str) -> str {
@@ -803,14 +799,8 @@ def _parse_receipt(raw: any) -> any {
 }
 
 def _write_file_atomic(path: str, contents: str) {
-    tmp = path + "." + str(os.getpid()) + "." + str(int(time.time() * 1000)) + ".tmp";
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600);
-    try {
-        os.write(fd, contents.encode("utf-8"));
-    } finally {
-        os.close(fd);
-    }
-    os.replace(tmp, path);
+    # Unique temp, full write, cleanup on failure (common.write_file_atomic).
+    write_file_atomic(path, contents, 0o600, False);
 }
 
 # Preserve native configured rules when overriding Codex's developer slot.

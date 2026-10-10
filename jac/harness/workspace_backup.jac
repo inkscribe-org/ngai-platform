@@ -49,6 +49,15 @@ import urllib.request;
 
 import from db { DATA_DIR, close_db }
 import from jsutil { js_stringify }
+import from common {
+    guard as _guard,
+    status_error,
+    failure,
+    js_len as _utf16_len,
+    iso_now as _iso_now,
+    now_ms as _now_ms,
+    write_file_atomic as _write_file_atomic,
+}
 import from routines { _state as _routines_state, _reset_state as _routines_reset_state }
 import from webhooks { _reset as _webhooks_reset }
 
@@ -114,14 +123,7 @@ class BackupError(Exception) {
 }
 
 def _fail(message: str, status: int = 400) {
-    err = BackupError(message);
-    setattr(err, "status", status);
-    raise err;
-}
-
-def _status_of(e: Exception) -> int {
-    s = getattr(e, "status", None);
-    return s if isinstance(s, int) and not isinstance(s, bool) else 400;
+    raise status_error(message, status, BackupError);
 }
 
 # ── JS-faithful JSON ───────────────────────────────────────────────────────
@@ -180,15 +182,6 @@ def _record(v: any) -> bool {
 
 def _utf8_len(text: str) -> int {
     return len(text.encode("utf-8", "surrogatepass"));
-}
-
-def _utf16_len(text: str) -> int {
-    return len(text.encode("utf-16-le", "surrogatepass")) // 2;
-}
-
-def _iso_now -> str {
-    now = datetime.datetime.now(datetime.timezone.utc);
-    return now.strftime("%Y-%m-%dT%H:%M:%S.") + f"{now.microsecond // 1000:03d}Z";
 }
 
 def _date_parses(text: str) -> bool {
@@ -431,27 +424,6 @@ def _read_private(path: str, limit: int, message: str) -> bytes {
 def _private_json(path: str) -> any {
     raw = _read_private(path, MAX_METADATA_BYTES, "Workspace backup metadata is too large or is not a regular file.");
     return _js_parse(raw.decode("utf-8", "replace"));
-}
-
-def _write_file_atomic(path: str, data: bytes, mode: int) {
-    # server/atomic.ts writeFileAtomic: sibling temp, fsync, rename.
-    tmp = f"{path}.{os.getpid()}.{uuid.uuid4()}.tmp";
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode);
-    try {
-        try {
-            view = memoryview(data);
-            offset = 0;
-            while offset < len(data) { offset += os.write(fd, view[offset:]); }
-            os.fsync(fd);
-        } finally {
-            os.close(fd);
-        }
-        os.chmod(tmp, mode);
-        os.replace(tmp, path);
-    } except Exception {
-        try { os.unlink(tmp); } except Exception { }
-        raise;
-    }
 }
 
 def _write_json(path: str, value: any) {
@@ -1941,10 +1913,6 @@ def _change_json(prepared: str, name: str, change: any) {
     _write_json(path, value);
 }
 
-def _now_ms -> int {
-    return int(time.time() * 1000);
-}
-
 def _prepare_restore(data_dir: str, id: str, manifest: dict[str, any]) -> str {
     _assert_local_auth_outside_snapshot(data_dir);
     job = _job_path(data_dir, id);
@@ -2271,14 +2239,6 @@ def wb_apply_and_reload(data_dir: str) -> dict[str, any] {
 
 # ── HTTP surface (re-bound onto harness.jac as workspace_backup_*) ──────────
 
-def _guard(omb_token: any) -> any {
-    want = os.environ.get("OMB_JAC_TOKEN");
-    if want and omb_token != want {
-        return {"ok": False, "status": 403, "error": "unauthorized"};
-    }
-    return None;
-}
-
 def _invoke(omb_token: any, policy_url: any, fn: any) -> any {
     g = _guard(omb_token);
     if g is not None { return g; }
@@ -2286,7 +2246,7 @@ def _invoke(omb_token: any, policy_url: any, fn: any) -> any {
     try {
         return fn();
     } except Exception as e {
-        return {"ok": False, "status": _status_of(e), "error": str(e)};
+        return failure(e, 400);
     } finally {
         _tls.policy_url = None;
     }

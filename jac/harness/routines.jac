@@ -21,10 +21,22 @@ import uuid;
 import time;
 import datetime;
 import tempfile;
-import urllib.request;
+import threading;
 import from zoneinfo { ZoneInfo }
 
 import from jsutil { js_stringify }
+import from common {
+    guard as _guard,
+    status_error,
+    status_of as _err_status,
+    failure,
+    js_pretty as _js_pretty,
+    iso_from_ms as _iso_string,
+    bridge_url_from_env,
+    bridge_post,
+    write_json_private,
+    redact_secrets_in_text as _redact_text,
+}
 import from db { DATA_DIR }
 
 # ---------------------------------------------------------------------------
@@ -247,14 +259,6 @@ def _js_trim_end(s: str) -> str {
     return s.rstrip(_JS_WS_CHARS);
 }
 
-def _err_status(e: Exception, default_status: int = 500) -> int {
-    s = getattr(e, "status", None);
-    if isinstance(s, int) and not isinstance(s, bool) {
-        return s;
-    }
-    return default_status;
-}
-
 class ApiError(Exception) {
     # Error carrying an HTTP status (JS `Object.assign(new Error, {status})`).
 }
@@ -263,97 +267,21 @@ class RoutineScheduleError(Exception) {
     # cleanSchedule wrapper - status 400 (server/routines.ts:579).
 }
 
-def _api_err(message: str, status: int) -> ApiError {
-    err = ApiError(message);
-    setattr(err, "status", status);
-    return err;
+def _api_err(message: str, status: int) -> Exception {
+    return status_error(message, status, ApiError);
 }
 
-def _sched_err(message: str) -> RoutineScheduleError {
-    err = RoutineScheduleError(message);
-    setattr(err, "status", 400);
-    return err;
+def _sched_err(message: str) -> Exception {
+    return status_error(message, 400, RoutineScheduleError);
 }
 
 # ---------------------------------------------------------------------------
 # redactSecretsInText - port of server/redact.ts
 # ---------------------------------------------------------------------------
 
-glob _REDACTION_MARKER: any = re.compile(r"^«redacted \d+ chars»$");
-
-def _redact_mask(value: str) -> str {
-    if _REDACTION_MARKER.match(value) {
-        return value;
-    }
-    return f"«redacted {len(value)} chars»";
-}
-
-glob _SECRET_KEY_PREFIXES: list[any] = [
-    # Verbatim shared/redact.ts KEY_PREFIXES: high-precision credential
-    # shapes only; a generic long-hex heuristic would rewrite real code.
-    re.compile(r"\bom[dg]_[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])"),
-    re.compile(r"\bsk-(?:ant-|proj-|live-|test-)?[A-Za-z0-9_-]{16,}"),
-    re.compile(r"\bxai-[A-Za-z0-9_-]{20,}"),
-    re.compile(r"\bgsk_[A-Za-z0-9]{40,}"),
-    re.compile(r"\bcsk-[A-Za-z0-9]{32,}"),
-    re.compile(r"\bhf_[A-Za-z0-9]{30,}"),
-    re.compile(r"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}"),
-    re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}"),
-    re.compile(r"\bxox[abposr]-[A-Za-z0-9-]{20,}"),
-    re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
-    re.compile(r"\bAIza[0-9A-Za-z_-]{30,}"),
-    re.compile(r"\bnpm_[A-Za-z0-9]{20,}"),
-    re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b"),
-];
-glob _REDACT_PEM: any = re.compile(r"(-----BEGIN [A-Z ]*PRIVATE KEY-----)([\s\S]*?)(-----END [A-Z ]*PRIVATE KEY-----)");
-glob _REDACT_BEARER: any = re.compile(r"(\bBearer\s+)([A-Za-z0-9._~+/=-]{12,})");
-glob _REDACT_KEY_VALUE: any = re.compile(r"\b((?:[A-Za-z0-9_-]*_)?(?:api[_-]?key|apikey|secret|token|password|passwd|authorization|auth[_-]?token|access[_-]?key|private[_-]?key)s?)([\"']?\s*[=:]\s*)([\"']?)([A-Za-z0-9._~+/=-]{8,})\3", re.IGNORECASE);
-glob _REDACT_KEY_SUFFIX: any = re.compile(r"\b([A-Za-z][A-Za-z0-9_-]*[_-]key)s?(=)([\"']?)([A-Za-z0-9._~+/=-]+)\3", re.IGNORECASE);
-glob _REDACT_SECRET_FLAG: any = re.compile(r"(--(?:token|password|passwd|api-key|apikey|secret|access-key|auth-token)(?:=|\s+))([\"']?)(?!-)([A-Za-z0-9._~+/=-]+)\2", re.IGNORECASE);
-glob _REDACT_URL_USERINFO: any = re.compile(r"(\b[a-z][a-z0-9+.-]*://[^\s/:@'\"]+:)([^\s/@'\"«»]+)(@)", re.IGNORECASE);
-
-def _redact_prefix(m: any) -> str {
-    return _redact_mask(m.group(0));
-}
-
-def _redact_pem(m: any) -> str {
-    return m.group(1) + "\n" + _redact_mask(m.group(2).strip()) + "\n" + m.group(3);
-}
-
-def _redact_bearer(m: any) -> str {
-    return m.group(1) + _redact_mask(m.group(2));
-}
-
-def _redact_kv(m: any) -> str {
-    return m.group(1) + m.group(2) + m.group(3) + _redact_mask(m.group(4)) + m.group(3);
-}
-
-def _redact_flag(m: any) -> str {
-    return m.group(1) + m.group(2) + _redact_mask(m.group(3)) + m.group(2);
-}
-
-def _redact_url(m: any) -> str {
-    return m.group(1) + _redact_mask(m.group(2)) + m.group(3);
-}
-
 def redact_secrets_in_text(text: any) -> str {
-    if not isinstance(text, str) or not text {
-        return "";
-    }
-    if len(text) < 8 {
-        return text;
-    }
-    out = text;
-    out = _REDACT_PEM.sub(_redact_pem, out);
-    for rx in _SECRET_KEY_PREFIXES {
-        out = rx.sub(_redact_prefix, out);
-    }
-    out = _REDACT_BEARER.sub(_redact_bearer, out);
-    out = _REDACT_KEY_VALUE.sub(_redact_kv, out);
-    out = _REDACT_KEY_SUFFIX.sub(_redact_kv, out);
-    out = _REDACT_SECRET_FLAG.sub(_redact_flag, out);
-    out = _REDACT_URL_USERINFO.sub(_redact_url, out);
-    return out;
+    # shared/redact.ts via common; non-strings read as "" here.
+    return _redact_text(text) if isinstance(text, str) else "";
 }
 
 # ---------------------------------------------------------------------------
@@ -361,16 +289,9 @@ def redact_secrets_in_text(text: any) -> str {
 # ---------------------------------------------------------------------------
 
 def _bridge_url -> any {
-    if _state["bridge_url"] is not None {
-        return _state["bridge_url"] or None;
-    }
-    base = os.environ.get("OMB_ROUTINES_BRIDGE_URL") or os.environ.get("OMB_NODE_URL");
-    if base {
-        u: any = base.rstrip("/") + "/api/internal/routine-bridge";
+    if _state["bridge_url"] is None {
+        u: any = bridge_url_from_env();
         _state["bridge_url"] = u;
-    } else {
-        e: any = "";
-        _state["bridge_url"] = e;
     }
     return _state["bridge_url"] or None;
 }
@@ -407,24 +328,7 @@ def _bridge(op: str, payload: dict[str, any]) -> dict[str, any]{
         _state["stub_calls"].append(call);
         return _stub_reply(op, payload);
     }
-    body = json.dumps(call).encode("utf-8");
-    headers = {"content-type": "application/json"};
-    token = os.environ.get("OMB_JAC_TOKEN");
-    if token {
-        headers["x-omb-jac-token"] = token;
-    }
-    req = urllib.request.Request(url, data=body, headers=headers, method="POST");
-    resp = urllib.request.urlopen(req, timeout=5);
-    try {
-        raw = resp.read().decode("utf-8");
-    } finally {
-        resp.close();
-    }
-    if not raw {
-        return {};
-    }
-    parsed = json.loads(raw);
-    return parsed if isinstance(parsed, dict) else {};
+    return bridge_post(url, call);
 }
 
 def _bot_state(bot_id: any) -> str{
@@ -564,29 +468,6 @@ def _has_pending_delegations(thread_id: any) -> bool {
 # ---------------------------------------------------------------------------
 
 }
-def _js_pretty(value: any, level: int = 0) -> str{
-    pad = "  " * level;
-    child_pad = "  " * (level + 1);
-    if isinstance(value, dict) {
-        if not value {
-            return "{}";
-        }
-        parts = [];
-        for (k, v) in value.items() {
-            parts.append(child_pad + js_stringify(str(k)) + ": " + _js_pretty(v, level + 1));
-        }
-        return "{\n" + ",\n".join(parts) + "\n" + pad + "}";
-    }
-    if isinstance(value, list) {
-        if not value {
-            return "[]";
-        }
-        parts = [child_pad + _js_pretty(v, level + 1) for v in value];
-        return "[\n" + ",\n".join(parts) + "\n" + pad + "]";
-    }
-    return js_stringify(value);
-
-}
 def _save -> None{
     # Active receipts own cancellation/timeout/event routing; evicting one
     # would strand live work, so only the oldest terminal runs are dropped.
@@ -602,34 +483,13 @@ def _save -> None{
         }
         _state["runs"] = kept;
     }
-    file = _file_path();
-    payload = _js_pretty({
+    write_json_private(_file_path(), {
         "version": 1,
         "routines": _state["routines"],
         "runs": _state["runs"],
         "routineRequestReceipts": _state["receipts"],
         "webhookRunReceipts": _state["webhook_receipts"]
     });
-    dirn = os.path.dirname(file) or ".";
-    os.makedirs(dirn, exist_ok=True);
-    mk = tempfile.mkstemp(prefix=".routines-", dir=dirn);
-    fd = mk[0];
-    tmp = mk[1];
-    try {
-        with os.fdopen(fd, "w", encoding="utf-8") as f {
-            f.write(payload);
-        }
-        os.chmod(tmp, 0o600);
-        os.replace(tmp, file);
-        os.chmod(file, 0o600);
-    } except Exception {
-        try {
-            os.unlink(tmp);
-        } except Exception {
-            
-        }
-        raise;
-    }
 
 # ---------------------------------------------------------------------------
 # croner@10 5-part evaluator
@@ -1760,11 +1620,6 @@ def _escape_attachment_path(value: str) -> str{
         .replace("\t", "&#9;")
         .replace("\r", "&#13;")
         .replace("\n", "&#10;"));
-
-}
-def _iso_string(ms: int) -> str{
-    dt = datetime.datetime.fromtimestamp(ms / 1000.0, tz=datetime.timezone.utc);
-    return dt.strftime("%Y-%m-%dT%H:%M:%S.") + f"{dt.microsecond // 1000:03d}Z";
 
 }
 def _fence_carried_report(output: str) -> str {
@@ -3914,14 +3769,6 @@ def _tick_body -> None{
 # def:pub surface (contract op names; omb_token checked when OMB_JAC_TOKEN set)
 # ---------------------------------------------------------------------------
 
-def _guard(omb_token: any) -> any {
-    expected = os.environ.get("OMB_JAC_TOKEN");
-    if expected and omb_token != expected {
-        return {"ok": False, "status": 403, "error": "unauthorized"};
-    }
-    return None;
-}
-
 def _invoke(omb_token: any, fn: any) -> any{
     g = _guard(omb_token);
     if g is not None {
@@ -3931,7 +3778,7 @@ def _invoke(omb_token: any, fn: any) -> any{
         _ensure_booted();
         return fn();
     } except Exception as e {
-        return {"ok": False, "status": _err_status(e), "error": str(e)};
+        return failure(e);
     }
 }
 
@@ -3945,7 +3792,7 @@ def:pub routine_boot(omb_token: (str | None) = None) -> dict[str, any] {
         _state["paused"] = False;
         return {"ok": True};
     } except Exception as e {
-        return {"ok": False, "status": _err_status(e), "error": str(e)};
+        return failure(e);
     }
 }
 

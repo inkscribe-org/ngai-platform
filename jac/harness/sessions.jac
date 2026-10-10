@@ -32,6 +32,7 @@ import secrets;
 import uuid;
 
 import from jsutil { js_string, js_stringify }
+import from common { js_pretty as _js_pretty, write_file_atomic as _write_file_atomic }
 
 
 # JS strips its own whitespace set in trim() and ToNumber; Python's is
@@ -124,8 +125,6 @@ glob DATA_DIR: str = os.environ.get(
     MAX_STREAM_TICKETS_PER_SESSION: int = 5,
     LAST_SEEN_WRITE_INTERVAL_MS: int = 60000,
     LOCKOUT: dict[str, int] = {"failures": 10, "windowMs": 60000, "lockMs": 60000},
-    RENAME_RETRY_DELAYS_MS: list[int] = [5, 10, 20, 40, 80],
-    _RETRYABLE_RENAME_ERRNOS: tuple[int, ...] = (errno.EPERM, errno.EACCES, errno.EBUSY),
     _CONTROL_RE: any = re.compile(
         "[\x00-\x1f\x7f-\x9f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]"
     ),
@@ -270,89 +269,6 @@ def cookie_max_age_seconds(session: dict[str, any], now: any = None) -> int {
         now = int(time.time() * 1000);
     }
     return max(1, math.floor((session["expiresAt"] - now) / 1000));
-}
-
-
-def _js_pretty(value: any, level: int) -> str {
-    # JSON.stringify(value, null, 2): objects and arrays spread over
-    # lines, primitives via the jsutil byte-exact writers.
-    if isinstance(value, dict) {
-        if not value {
-            return "{}";
-        }
-        gap = "  " * (level + 1);
-        base = "  " * level;
-        parts: list[str] = [];
-        for (k, v) in value.items() {
-            parts.append(gap + js_string(str(k)) + ": " + _js_pretty(v, level + 1));
-        }
-        return "{\n" + ",\n".join(parts) + "\n" + base + "}";
-    }
-    if isinstance(value, list) or isinstance(value, tuple) {
-        if not value {
-            return "[]";
-        }
-        gap = "  " * (level + 1);
-        base = "  " * level;
-        parts: list[str] = [];
-        for v in value {
-            parts.append(gap + _js_pretty(v, level + 1));
-        }
-        return "[\n" + ",\n".join(parts) + "\n" + base + "]";
-    }
-    return js_stringify(value);
-}
-
-
-def _rename_with_retry(tmp: str, path: str) -> None {
-    attempt = 0;
-    while True {
-        try {
-            os.replace(tmp, path);
-            return;
-        } except OSError as e {
-            if e.errno not in _RETRYABLE_RENAME_ERRNOS or attempt >= len(RENAME_RETRY_DELAYS_MS) {
-                raise;
-            }
-            time.sleep(RENAME_RETRY_DELAYS_MS[attempt] / 1000);
-        }
-        attempt += 1;
-    }
-}
-
-
-def _write_file_atomic(path: str, data: str, mode: (int | None) = None, durable: bool = True) {
-    # writeFileAtomic: sibling temp file, fsync, rename over the target.
-    # The mode is applied to the temporary inode so a broader-permission
-    # file is never visible between write and rename.
-    tmp = f"{path}.{os.getpid()}.{uuid.uuid4()}.tmp";
-    fd: any = None;
-    try {
-        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, (mode if mode is not None else 0o666));
-        payload = data.encode("utf-8");
-        offset = 0;
-        while offset < len(payload) {
-            offset += os.write(fd, payload[offset:]);
-        }
-        if durable {
-            os.fsync(fd);
-        }
-        os.close(fd);
-        fd = None;
-        _rename_with_retry(tmp, path);
-    } except Exception {
-        if fd is not None {
-            try {
-                os.close(fd);
-            } except Exception {
-            }
-        }
-        try {
-            os.unlink(tmp);
-        } except Exception {
-        }
-        raise;
-    }
 }
 
 

@@ -38,7 +38,6 @@ import socket;
 import hashlib;
 import secrets;
 import datetime;
-import tempfile;
 import threading;
 import urllib.error;
 import urllib.parse;
@@ -46,7 +45,14 @@ import urllib.request;
 import from http.server { BaseHTTPRequestHandler, ThreadingHTTPServer }
 
 import from db { DATA_DIR }
-import from routines { _js_pretty, _bridge, _emit }
+import from common {
+    guard as _guard,
+    failure,
+    now_ms as _now_ms,
+    iso_from_ms as _iso,
+    write_json_private,
+}
+import from routines { _bridge, _emit }
 
 glob DEFAULT_LIFETIME_MS: int = 300000;
 # Refresh a token this close to expiry, so a turn never starts on one that
@@ -140,15 +146,6 @@ def _emit_frame(payload: dict[str, any]) {
 }
 
 # ── small JS-compatible helpers ────────────────────────────────────────────
-
-def _now_ms -> int {
-    return int(time.time() * 1000);
-}
-
-def _iso(ms: int) -> str {
-    d = datetime.datetime.fromtimestamp(ms // 1000, datetime.timezone.utc);
-    return d.strftime("%Y-%m-%dT%H:%M:%S") + "." + str(ms % 1000).zfill(3) + "Z";
-}
 
 def _parse_iso_ms(value: str) -> int {
     d = datetime.datetime.strptime(value[:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=datetime.timezone.utc);
@@ -610,24 +607,7 @@ def _store_read -> dict[str, any] {
 }
 
 def _store_write(data: dict[str, any]) {
-    file = _store_file();
-    payload = _js_pretty(data);
-    dirn = os.path.dirname(file) or ".";
-    os.makedirs(dirn, exist_ok=True);
-    mk = tempfile.mkstemp(prefix=".mcp-oauth-", dir=dirn);
-    tmp = mk[1];
-    try {
-        with os.fdopen(mk[0], "w", encoding="utf-8") as f {
-            f.write(payload);
-            f.flush();
-            os.fsync(f.fileno());
-        }
-        os.chmod(tmp, 0o600);
-        os.replace(tmp, file);
-    } except Exception {
-        try { os.unlink(tmp); } except Exception { }
-        raise;
-    }
+    write_json_private(_store_file(), data);
 }
 
 def _auth_of(rec: dict[str, any]) -> str {
@@ -1357,26 +1337,13 @@ def with_mcp_sign_in(servers: dict[str, any]) -> dict[str, any] {
 # node calls these off the serialized routine queue (server/jac-mcp-oauth.ts),
 # so they may run concurrently; everything above is lock-guarded.
 
-def _guard(omb_token: any) -> any {
-    want = os.environ.get("OMB_JAC_TOKEN");
-    if want and omb_token != want {
-        return {"ok": False, "status": 403, "error": "unauthorized"};
-    }
-    return None;
-}
-
 def _invoke(omb_token: any, fn: any, fallback_status: int = 500) -> any {
     g = _guard(omb_token);
     if g is not None { return g; }
     try {
         return fn();
     } except Exception as e {
-        st = getattr(e, "status", None);
-        if not isinstance(st, int) or isinstance(st, bool) { st = fallback_status; }
-        out: dict[str, any] = {"ok": False, "status": st, "error": str(e)};
-        code = getattr(e, "code", None);
-        if isinstance(code, str) { out["code"] = code; }
-        return out;
+        return failure(e, fallback_status, True);
     }
 }
 

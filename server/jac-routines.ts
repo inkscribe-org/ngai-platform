@@ -246,6 +246,19 @@ interface JacFailureEnvelope {
   code?: string;
 }
 
+/** A Jac op answers 200 with `{ok:false,status,error[,code]}` on failure;
+ * surface that as a thrown error carrying the status (and code). */
+function unwrapJacResult(result: unknown, fallback: string): unknown {
+  if (result && typeof result === "object" && "ok" in result && result.ok === false) {
+    const failed = result as JacFailureEnvelope;
+    throw Object.assign(
+      new Error(failed.error ?? fallback),
+      { status: failed.status ?? 500, ...(typeof failed.code === "string" ? { code: failed.code } : {}) },
+    );
+  }
+  return result;
+}
+
 async function jacOpRaw(name: string, args: Record<string, unknown>, timeoutMs = OP_TIMEOUT_MS): Promise<unknown> {
   const url = jacUrl ?? (await ensureJacHarness());
   if (!url) throw Object.assign(new Error("routines unavailable"), { status: 503 });
@@ -274,14 +287,7 @@ async function jacOpRaw(name: string, args: Record<string, unknown>, timeoutMs =
     if (statusOf(error) !== undefined) throw error;
     throw Object.assign(new Error("jac harness returned a malformed response"), { status: 503 });
   }
-  if (result && typeof result === "object" && "ok" in result && result.ok === false) {
-    const failed = result as JacFailureEnvelope;
-    throw Object.assign(
-      new Error(failed.error ?? "routine operation failed"),
-      { status: failed.status ?? 500, ...(typeof failed.code === "string" ? { code: failed.code } : {}) },
-    );
-  }
-  return result;
+  return unwrapJacResult(result, "routine operation failed");
 }
 
 /** Long operations (workspace backup snapshot/stage/restore, team backup
@@ -313,12 +319,7 @@ async function jacLongOpRaw(name: string, args: Record<string, unknown>): Promis
   if (status < 200 || status >= 300) {
     throw Object.assign(new Error(body.error ?? `jac harness answered ${status}`), { status });
   }
-  const result = body.data?.result;
-  if (result && typeof result === "object" && "ok" in result && result.ok === false) {
-    const failed = result as JacFailureEnvelope;
-    throw Object.assign(new Error(failed.error ?? "operation failed"), { status: failed.status ?? 500 });
-  }
-  return result;
+  return unwrapJacResult(body.data?.result, "operation failed");
 }
 
 // Every node→Jac call is serialized on one chain: the in-process manager

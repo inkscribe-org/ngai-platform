@@ -44,6 +44,7 @@ import urllib.parse;
 import concurrent.futures;
 
 import from jsutil { js_stringify, js_number }
+import from common { guard as _guard, status_error, failure }
 import from routines { _bridge }
 
 glob DEFAULT_BACKEND_ORIGIN: str = "https://backend.composio.dev";
@@ -136,24 +137,12 @@ def _reset {
     });
 }
 
-class ConnectorError(Exception) {
-    # Error carrying an HTTP status (JS `Object.assign(new Error, {status})`).
-}
-
 def _fail(status: int, message: str) {
-    err = ConnectorError(message);
-    setattr(err, "status", status);
-    raise err;
+    raise status_error(message, status);
 }
 
 def _error(message: str) {
     raise Exception(message);
-}
-
-def _status_of(e: Exception) -> int {
-    s = getattr(e, "status", None);
-    if isinstance(s, int) and not isinstance(s, bool) { return s; }
-    return 500;
 }
 
 def _now -> int {
@@ -2148,14 +2137,6 @@ def with_scope_hint(body: bytes, content_type: str, slugs: list[any]) -> bytes {
 
 # ── HTTP surface (re-bound onto harness.jac as connectors_*) ────────────────
 
-def _guard(omb_token: any) -> any {
-    want = os.environ.get("OMB_JAC_TOKEN");
-    if want and omb_token != want {
-        return {"ok": False, "status": 403, "error": "unauthorized"};
-    }
-    return None;
-}
-
 # Every op that reads the backend carries node's managed-broker credential
 # ({"access": null | {url, token}}; absent = never set), so a respawned
 # harness never serves without it.
@@ -2170,7 +2151,7 @@ def _invoke(omb_token: any, managed: any, fn: any) -> any {
         _apply_managed(managed);
         return fn();
     } except Exception as e {
-        return {"ok": False, "status": _status_of(e), "error": str(e)};
+        return failure(e);
     }
 }
 

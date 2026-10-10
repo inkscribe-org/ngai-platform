@@ -21,13 +21,18 @@ import hmac;
 import time;
 import hashlib;
 import secrets;
-import datetime;
-import tempfile;
 
 import from db { DATA_DIR }
 import from jsutil { js_stringify }
+import from common {
+    status_error,
+    status_of as _status_of,
+    invoke as _invoke,
+    js_pretty as _js_pretty,
+    iso_from_ms as _iso,
+    write_json_private,
+}
 import from routines {
-    _js_pretty,
     _bridge,
     _bot_state,
     _emit,
@@ -66,19 +71,8 @@ def _reset -> None {
     });
 }
 
-class WebhookError(Exception) {
-    # Error carrying an HTTP status (JS `Object.assign(new Error, {status})`).
-}
-
 def _fail(status: int, message: str) {
-    err = WebhookError(message);
-    setattr(err, "status", status);
-    raise err;
-}
-
-def _status_of(e: Exception) -> int {
-    s = getattr(e, "status", None);
-    return s if isinstance(s, int) and not isinstance(s, bool) else 500;
+    raise status_error(message, status);
 }
 
 def _now -> int {
@@ -393,27 +387,12 @@ def _load {
 }
 
 def _save {
-    file = _file_path();
-    payload = _js_pretty({
+    write_json_private(_file_path(), {
         "version": 1,
         "webhooks": _wh["webhooks"],
         "deliveries": _wh["deliveries"],
         "attempts": _wh["attempts"],
     });
-    dirn = os.path.dirname(file) or ".";
-    os.makedirs(dirn, exist_ok=True);
-    mk = tempfile.mkstemp(prefix=".webhooks-", dir=dirn);
-    tmp = mk[1];
-    try {
-        with os.fdopen(mk[0], "w", encoding="utf-8") as f {
-            f.write(payload);
-        }
-        os.chmod(tmp, 0o600);
-        os.replace(tmp, file);
-    } except Exception {
-        try { os.unlink(tmp); } except Exception { }
-        raise;
-    }
 }
 
 # ── helpers ────────────────────────────────────────────────────────────────
@@ -431,11 +410,6 @@ def _public(trigger: dict[str, any]) -> dict[str, any] {
     out = dict(trigger);
     out.pop("secretHash", None);
     return out;
-}
-
-def _iso(ms: int) -> str {
-    d = datetime.datetime.fromtimestamp(ms // 1000, datetime.timezone.utc);
-    return d.strftime("%Y-%m-%dT%H:%M:%S") + "." + str(ms % 1000).zfill(3) + "Z";
 }
 
 def _serialize_payload(payload: any) -> str {
@@ -845,24 +819,6 @@ def _capture_verification(trigger: dict[str, any], event: dict[str, any]) -> dic
 }
 
 # ── HTTP surface (re-bound onto harness.jac as webhook_*) ───────────────────
-
-def _guard(omb_token: any) -> any {
-    want = os.environ.get("OMB_JAC_TOKEN");
-    if want and omb_token != want {
-        return {"ok": False, "status": 403, "error": "unauthorized"};
-    }
-    return None;
-}
-
-def _invoke(omb_token: any, fn: any) -> any {
-    g = _guard(omb_token);
-    if g is not None { return g; }
-    try {
-        return fn();
-    } except Exception as e {
-        return {"ok": False, "status": _status_of(e), "error": str(e)};
-    }
-}
 
 # Optional kwargs: the fused jacup binary binds the stringified default when
 # a request omits one, so every optional arg is type-checked before use.

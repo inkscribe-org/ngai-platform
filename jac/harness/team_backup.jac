@@ -23,6 +23,7 @@ import time;
 import uuid;
 
 import from jsutil { js_stringify, js_number }
+import from common { status_error, status_of as _status_of, invoke as _invoke }
 import from routines {
     _bridge,
     _ensure_booted,
@@ -36,19 +37,8 @@ glob MAX_TEAM_BACKUP_BYTES: int = 50 * 1024 * 1024;
 
 glob _tb: dict[str, any] = {};
 
-class TeamBackupError(Exception) {
-    # Error carrying an HTTP status (JS `Object.assign(new Error, {status})`).
-}
-
 def _fail(status: int, message: str) {
-    err = TeamBackupError(message);
-    setattr(err, "status", status);
-    raise err;
-}
-
-def _status_of(e: Exception) -> int {
-    s = getattr(e, "status", None);
-    return s if isinstance(s, int) and not isinstance(s, bool) else 500;
+    raise status_error(message, status);
 }
 
 # ── hooks ─────────────────────────────────────────────────────────────────
@@ -1073,24 +1063,6 @@ def import_team_backup(input: any, selection: any, existing: dict[str, any], vis
 }
 
 # ── HTTP surface (re-bound onto harness.jac as team_backup_*) ─────────────
-
-def _guard(omb_token: any) -> any {
-    want = os.environ.get("OMB_JAC_TOKEN");
-    if want and omb_token != want {
-        return {"ok": False, "status": 403, "error": "unauthorized"};
-    }
-    return None;
-}
-
-def _invoke(omb_token: any, fn: any) -> any {
-    g = _guard(omb_token);
-    if g is not None { return g; }
-    try {
-        return fn();
-    } except Exception as e {
-        return {"ok": False, "status": _status_of(e), "error": str(e)};
-    }
-}
 
 def:pub team_backup_create(snapshot: any = None, name: any = None, omb_token: any = None) -> dict[str, any] {
     def _go -> dict[str, any] {

@@ -6,23 +6,13 @@ permission broker in driver_claude_broker.jac."""
 import os;
 import re;
 import json;
-import time;
 import hashlib;
 import urllib.request;
 import urllib.error;
 
 import from db { DATA_DIR }
-
-# ── ids / time ─────────────────────────────────────────────────────────────
-
-def new_uuid() -> str {
-    import uuid;
-    return str(uuid.uuid4());
-}
-
-def now_ms() -> int {
-    return int(time.time() * 1000);
-}
+# Re-exported for the driver modules that import them from here.
+import from common { new_uuid, now_ms, redact_mask, redact_secrets_in_text }
 
 # ── CLI version floors (claude.ts CLAUDE_FLAG_FLOORS) ──────────────────────
 # Verified against the published binaries: an unknown flag is a hard argument
@@ -794,75 +784,6 @@ def question_choices(questions: list[any]) -> any {
 }
 
 # ── summaries (tool-summary.ts + redact) ───────────────────────────────────
-
-glob REDACTION_MARKER_RE: any = re.compile(r"^«redacted \d+ chars»$");
-
-def redact_mask(value: str) -> str {
-    if REDACTION_MARKER_RE.match(value) { return value; }
-    return "«redacted " + str(len(value)) + " chars»";
-}
-
-glob SECRET_KEY_PATTERNS: list[any] = [
-    re.compile(r"\bom[dg]_[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])"),
-    re.compile(r"\bsk-(?:ant-|proj-|live-|test-)?[A-Za-z0-9_-]{16,}"),
-    re.compile(r"\bxai-[A-Za-z0-9_-]{20,}"),
-    re.compile(r"\bgsk_[A-Za-z0-9]{40,}"),
-    re.compile(r"\bcsk-[A-Za-z0-9]{32,}"),
-    re.compile(r"\bhf_[A-Za-z0-9]{30,}"),
-    re.compile(r"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}"),
-    re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}"),
-    re.compile(r"\bxox[abposr]-[A-Za-z0-9-]{20,}"),
-    re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
-    re.compile(r"\bAIza[0-9A-Za-z_-]{30,}"),
-    re.compile(r"\bnpm_[A-Za-z0-9]{20,}"),
-    re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b"),
-];
-glob SECRET_BEARER_RE: any = re.compile(r"(\bBearer\s+)([A-Za-z0-9._~+/=-]{12,})");
-glob SECRET_PEM_RE: any = re.compile(r"(-----BEGIN [A-Z ]*PRIVATE KEY-----)([\s\S]*?)(-----END [A-Z ]*PRIVATE KEY-----)");
-glob SECRET_KEY_VALUE_RE: any = re.compile(
-    r"\b((?:[A-Za-z0-9_-]*_)?(?:api[_-]?key|apikey|secret|token|password|passwd|authorization|auth[_-]?token|access[_-]?key|private[_-]?key)s?)([\"']?\s*[=:]\s*)([\"']?)([A-Za-z0-9._~+/=-]{8,})\3", re.I);
-glob SECRET_KEY_SUFFIX_RE: any = re.compile(r"\b([A-Za-z][A-Za-z0-9_-]*[_-]key)s?(=)([\"']?)([A-Za-z0-9._~+/=-]+)\3");
-glob SECRET_FLAG_RE: any = re.compile(
-    r"(--(?:token|password|passwd|api-key|apikey|secret|access-key|auth-token)(?:=|\s+))([\"']?)(?!-)([A-Za-z0-9._~+/=-]+)\2");
-glob SECRET_URL_USERINFO_RE: any = re.compile(r"(\b[a-z][a-z0-9+.-]*://[^\s/:@'\":]+:)([^\s/@'\"«»]+)(@)");
-
-def _mask_match(m: any) -> str {
-    return redact_mask(m.group(0));
-}
-
-def _sub_pem(m: any) -> str {
-    return m.group(1) + "\n" + redact_mask(m.group(2).strip()) + "\n" + m.group(3);
-}
-
-def _sub_bearer(m: any) -> str {
-    return m.group(1) + redact_mask(m.group(2));
-}
-
-def _sub_key_value(m: any) -> str {
-    return m.group(1) + m.group(2) + m.group(3) + redact_mask(m.group(4)) + m.group(3);
-}
-
-def _sub_flag(m: any) -> str {
-    return m.group(1) + m.group(2) + redact_mask(m.group(3)) + m.group(2);
-}
-
-def _sub_userinfo(m: any) -> str {
-    return m.group(1) + redact_mask(m.group(2)) + m.group(3);
-}
-
-def redact_secrets_in_text(text: str) -> str {
-    if not text or len(text) < 8 { return text; }
-    out = SECRET_PEM_RE.sub(_sub_pem, text);
-    for pat in SECRET_KEY_PATTERNS {
-        out = pat.sub(_mask_match, out);
-    }
-    out = SECRET_BEARER_RE.sub(_sub_bearer, out);
-    out = SECRET_KEY_VALUE_RE.sub(_sub_key_value, out);
-    out = SECRET_KEY_SUFFIX_RE.sub(_sub_key_value, out);
-    out = SECRET_FLAG_RE.sub(_sub_flag, out);
-    out = SECRET_URL_USERINFO_RE.sub(_sub_userinfo, out);
-    return out;
-}
 
 glob SUMMARY_LIMIT: int = 200;
 
