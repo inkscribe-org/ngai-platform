@@ -2,7 +2,9 @@
 
 Date: 2026-10-07. Base: `main` @ 63d0ef3. Branch: `jac/codebase-migration`.
 
-Status: **phase 0 complete — GO**. Spike findings:
+Status: **phase 0 complete — GO**. **Execution plan from 2026-10-10:**
+`docs/plans/2026-10-10-jac-implementation-plan.md` (workstreams, order,
+acceptance, upstream dependency map). Spike findings:
 `docs/plans/2026-10-07-jac-runtime-spike.md`. Spike code: `jac/spike/`.
 
 ## Origin
@@ -218,6 +220,7 @@ core turn pipeline on the runtime.
 | 2 | Module `glob` vars cannot be rebound from `def` scope — plain `x = v` shadows locally (reads see the module default, or UnboundLocalError) | `db()`'s `_handle = open_db()` became a local; later calls saw `None` | not filed — language semantics, not a bug; doc note in AGENTS.md | fixed in our modules via `_state` dict / `globals()["x"]` |
 | 3 | `raise x` with `x` typed `any` is E1090 "Cannot raise Any" (also on 0.37.25) | `def f(b: dict[str, any]) { raise b["error"]; }` | [jaseci-labs/jac#9934](https://github.com/jaseci-labs/jac/issues/9934) (issue with inline patch + regression test; PR blocked: fork push needs the `workflow` token scope) | workaround in tree: `err: Exception = b["error"]; raise err;` |
 | 4 | dict-slot narrowing after a comparison: `if h["k"] == "x" { h["k"] = None; }` is E1001 on 0.37.21 | as shown | believed fixed by 0.37.25 (AGENTS §7 quirk) | workaround: `h.update({...})` |
+| 5–26 | jac-desktop capability/platform gaps for the desktop app (tray, auto-update, deep links, autostart, single instance, installers/signing, Windows + Intel macOS hosts, offline per-app DB, custom plugins, service apps in release builds, relocatable releases, embedded-backend extensions, docs drift, menus, window chrome, badge, dialogs, multi-window, webview media/permissions, dropped-file paths, keychain, sidecar bundling) | see implementation plan §14 | jaseci-labs/jac #9936–#9941, #9943–#9958 | open (filed 2026-10-10) |
 
 ## Open decisions (reviewer's call; recommendations marked)
 

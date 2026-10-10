@@ -181,8 +181,9 @@ Learned during the phase-0 spike (`jac/spike/`); keep updated as we hit more:
   (runtime + approval gate + the openai-compat options/registration),
   `_protocol` (tool-call accumulator, error verdicts), `_mcp` (per-turn
   stdio MCP sessions, images, AbortSignal), `_schema` (strict JSON
-  Schema validator standing in for Ajv). cerebras/mistral/minimax/grok
-  reuse it with a `_<kind>_options` + `chat_runtime_impl` registration.
+  Schema validator standing in for Ajv). Only `openai-compat` is
+  registered; cerebras/mistral/minimax/grok are NOT ported yet — each needs
+  a `_<kind>_options` + `chat_runtime_impl` registration (plan WS-D2).
   Snapshot stays node-side (kind answers 501; key-rejection state is
   node's `key-rejections.ts`, fed by bridge op `key_verdict` carrying a
   key fingerprint). The shim sends `defaultModel` with model-less turns
@@ -295,3 +296,12 @@ servers re-read sources mid-run).
 the right-hand side resolves to the enclosing function's parameter, not the
 node's field (W3040 is only a checker warning; `graph.jac thread_node /
 bot_node` return the right node).
+
+## 10. Where the migration goes next
+
+`docs/plans/2026-10-10-jac-implementation-plan.md` is the execution plan:
+end state is one jac-desktop app (no node, no Electron); phases A–H with
+per-workstream scope, acceptance and dependencies; the upstream
+jaseci-labs/jac issues that gate the desktop shell (§14). New work ports
+to the end-state shape — no new bridge ops or mirrors (plan §0).
+
