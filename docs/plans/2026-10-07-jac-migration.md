@@ -32,10 +32,13 @@ codespace: JSX compiles to a React/Vite bundle, npm deps are declared in
 `jac.toml`, and `await serverFn()` in client code becomes a real RPC
 against `def:pub`/`walker:pub` endpoints. CSR only (no SSR) — which
 matches `src/`, already a Vite SPA. So "fully Jac" is defined as:
-**every backend process that owns business logic, state, or transports is
-Jac**, and the React client is a candidate port behind a phase-6 gate.
-UI shells and platforms without a Python runtime stay as they are,
-talking the same wire contract.
+**the whole desktop app is a Jac build** — backend, client and the desktop
+shell. **Decided 2026-10-10:** the shipped app is the output of a Jac
+build, so it carries whatever runtime that build includes; there is no
+separate "ship a jac runtime next to Electron/node" packaging step, and
+Electron and the node server go away rather than being adapted. Only
+platforms without a Python runtime (Cloudflare Workers) and dev tooling
+stay TS, talking the same wire contract.
 
 | Component | Target | Rationale |
 | --- | --- | --- |
@@ -44,14 +47,20 @@ talking the same wire contract.
 | `enterprise/` server (6 files) | **Jac** (phase 5, with server) | License routes touch the same store |
 | `shared/` wire contracts | **Stays zod/TS as source of truth** (see contract section) | Single source of truth for both sides |
 | `src/` React client | **Jac `cl`** — phase 6, committed | Jac compiles JSX→React/Vite; `has`→`useState`, `can entry`→`useEffect`, npm deps declared in `jac.toml`. A rewrite per component subtree, not a transform; talks the wire contract until cutover, then Jac RPC |
-| `electron/` shells | Stays JS; spawns the Jac harness binary instead of importing TS server code | Electron main is JS by design; only the embedded harness changes |
+| `electron/` shells | **Replaced by the Jac desktop build** (decided 2026-10-10) | The app ships as a Jac build output; Electron main/preload and the esbuild-bundled node server are retired with M5/M6. Build target still to choose — see open decision 7 |
 | Hosted tier: `boat*`, `cloud-*`, `vps-*`, `hosted-*`, `lending-*`; fleet/tailscale/tunnel; voice/live-call/phone/TTS | **Deferred — stays on the TS harness or is re-scoped when needed** | Not core to the Jac port; ~13k LOC of impl the migration deliberately does not carry first |
 | `cloudflare/` Workers, `apps/docs`, `evals/`, `scripts/` | Stay TS | Workers have no Python runtime; docs/evals talk the wire contract; evals become the parity harness |
 
 ## Target architecture
 
-Same two-process local-first shape as today; the harness process changes
-implementation, not contract:
+**End state (decided 2026-10-10):** one Jac desktop app — a single native
+binary from `jac build` of a `kind = "desktop"` app: embedded CPython runs
+the Jac server in-process on loopback, the `cl` UI renders in the OS
+webview. No Electron, no node server, no node↔Jac bridge (open decision 7).
+
+**During the migration** (M1–M5) the shape below holds: same two-process
+local-first shape as today; the harness process changes implementation,
+not contract:
 
 ```mermaid
 flowchart LR
@@ -152,11 +161,34 @@ core turn pipeline on the runtime.
 - **Dockerfile**: gains a python stage shipping the jac wheel + harness;
   runtime image grows accordingly. Caddy/router split logic lands in
   `deploy/` during phase 1.
-- **Electron**: bundles a frozen CPython + jac runtime (onedir) instead of
-  the esbuild-bundled TS server; `electron-builder.yml`, `after-pack.mjs`,
-  and the win/linux packaging workflows change. This is the largest
-  packaging risk — spike it in phase 0 (size delta, AV/notarization,
-  cross-platform matrix).
+- **Desktop app** (revised 2026-10-10): the app is built by Jac, so the
+  build output is the shipped artifact — no Electron, no bundled node
+  server, no separately shipped jac runtime. `electron-builder.yml`,
+  `after-pack.mjs`, `scripts/bundle-server.mjs` and the win/linux/mac
+  packaging workflows are replaced by the Jac build, not extended.
+  Until that build exists, the packaged-app smokes in CI (packaged server
+  smoke ×2, macOS smokes, package + smoke Ubuntu) fail on purpose: the
+  Electron bundle has no Jac harness, so every ported subsystem answers 503
+  there. They are retired with the Electron packaging, not patched.
+  Target: the jac-desktop app kind (open decision 7). Capability gap
+  against today's Electron app, from the jac-desktop reference:
+  - **covered** by built-in `@jac/desktop` plugins (gated under
+    `[desktop.plugins]`): `fs`, `dialog`, `clipboard`, `notification`,
+    `app_window`, `shell` (deny-all by default), `path`; SSO/OAuth via the
+    `/__jac/` broker.
+  - **not documented / to drive upstream (AGENTS §3)**: system tray,
+    auto-update (+ the legacy updater mirror), deep links / custom URL
+    protocol, login-item autostart, single-instance lock, per-OS
+    installers and code signing/notarization (upstream #6436, open),
+    keyword args across the `@jac/desktop` boundary (#6675).
+  - **ours to port**: the CUA/local-computer native helpers and their
+    spawn/signing, the managed-companion guardian, the shared-terminal and
+    browser-engine sidecars — reachable from sv code as subprocesses.
+  - **platforms**: `--platform` lists windows/macos/linux, but jaseci's
+    jac 0.37 releases ship the `jac` toolchain binary for Linux x86_64/arm64
+    and macOS arm64 only (no Windows, no Intel macOS) — confirm that
+    building and running a Windows/Intel-macOS desktop app works before
+    retiring Electron there.
 - **CI**: `ci.yml` shards gain a Jac job (jac tests + conformance suite);
   existing Vitest suites keep gating unchanged behavior until their
   subsystem's implementation is deleted, then the obsolete tests are
@@ -171,7 +203,7 @@ core turn pipeline on the runtime.
 | jaclang runtime gaps (SSE, subprocess streaming, long-lived process) | Phase 0 go/no-go; upstream-fix policy; no routing around |
 | Two processes, one state dir | Seam rules above; the existing `acquireDataDirLeaseForProcess` gets a Jac-side equivalent; conformance job |
 | Wire drift between zod and Jac validation | Emitted-schema validation in CI, both sides |
-| Packaging size/complexity for desktop | Spike in phase 0 before committing phases 4–5 |
+| Desktop app as a Jac build: target maturity and platform coverage (no jac 0.37 for Windows / Intel macOS) | Pick the target (open decision 7) and spike it against the Electron capability list above before M5; drive missing platforms upstream |
 | Upstream-fix flood early on | Expected and budgeted; defect table below is the ledger |
 | Node→Python hot-path throughput on driver event fanout | Chat-scale, not high-frequency trading; measure in phase 3 against golden corpora before cutover |
 
@@ -201,6 +233,22 @@ core turn pipeline on the runtime.
 6. ~~Client migration~~ **decided 2026-10-07**: `src/` ports to Jac `cl`
    JSX in phase 6 — a committed rewrite, per-subtree, on the wire
    contract until each subtree's cutover, then Jac RPC.
+7. ~~Desktop build target~~ **decided 2026-10-10**: Jac's `desktop` app
+   kind (jac-desktop, in jaclang core; beta). `[apps.<name>] kind =
+   "desktop"`; `jac build <app>` → `.jac/client/desktop/<app>`, one native
+   binary (`jac build --native`, no Rust/PyInstaller) that boots the fused
+   Jac runtime on an embedded CPython, runs the one `JacAPIServer` on
+   loopback (sv walkers/functions in-process, colocated service apps under
+   `/api/<app>`), and renders the `cl` UI in the OS webview (WebKitGTK /
+   WKWebView / WebView2) or bundled Chromium (`[desktop] engine = "cef"`).
+   `jac build --platform {windows,macos,linux,all}`. Dev: `jac run --dev
+   <app>` (HMR, native engine). Docs:
+   `third_party/jac/jac/jaclang/cli/docs/build/desktop-mobile.md`,
+   `.../reference/plugins/jac-desktop.md`. Consequences: no separate harness
+   process and no node↔Jac bridge in the shipped app — the M1–M4 seam
+   (`jacOp`, `/api/internal/routine-bridge`, sync mirrors) is migration
+   scaffolding that M5 removes; and the 209–580s cold compile becomes a
+   build-time cost, not a boot cost.
 
 ## Decided scope (2026-10-07, after inventory of ~127k backend impl LOC)
 
@@ -301,6 +349,9 @@ core turn pipeline on the runtime.
   time (>580s, see AGENTS §9) is now the main operational risk; mirrors do
   not refresh after a harness respawn (control/team computers).
 - M5: `server/index.ts` deleted; companion + enterprise ported; single
-  process again; plan closed out in `docs/verification/`.
+  process again; plan closed out in `docs/verification/`. With the
+  2026-10-10 direction, M5 also retires the Electron main process and the
+  bundled node server: the desktop app becomes the Jac build (open
+  decision 7), so the packaged-app CI jobs move to that build.
 - M6: `src/` subtrees ported to Jac `cl`; TS client deleted when coverage
   is complete.
