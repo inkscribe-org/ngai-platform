@@ -11,6 +11,7 @@ _impls at import; ops dispatch on instance["kind"]. Implemented kinds today:
     node↔Jac adapter contract is verifiable without a real engine.
 """
 
+import sys;
 import threading;
 import uuid;
 
@@ -67,7 +68,9 @@ def _bridge(op: str, payload: dict[str, any]) -> dict[str, any] {
         return bridge_post(url, call);
     } except Exception as e {
         # A bridge failure must never crash a turn's event path; the fold
-        # degrades to "event lost", same as an in-process listener throwing.
+        # degrades to "event lost", same as an in-process listener throwing —
+        # but say so, or a dropped turn.completed is undiagnosable.
+        print(f"drivers: bridge {op} failed: {e}", file=sys.stderr, flush=True);
         return {"ok": False, "error": str(e)};
     }
 }
@@ -153,6 +156,19 @@ def:pub driver_create(
             impl_fns["create"](inst);
         } except Exception as e {
             return _fail(f"{kind} create failed: {e}", 500);
+        }
+    }
+    # A re-create for the same id (config change, registry rebuild) must not
+    # orphan the previous instance's CLI processes.
+    previous = _instances.get(instance_id);
+    if previous is not None {
+        prev_dispose = (_impls.get(previous["kind"]) or {}).get("dispose");
+        if prev_dispose is not None {
+            try {
+                prev_dispose(previous);
+            } except Exception as e {
+                print(f"drivers: dispose of replaced {instance_id} failed: {e}", file=sys.stderr, flush=True);
+            }
         }
     }
     _instances[instance_id] = inst;

@@ -348,8 +348,11 @@ def _goal_state(group_id: any, coordinator_bot_id: any) -> str{
 def _emit(payload: dict[str, any]) -> None {
     try {
         _bridge("emit", {"payload": payload});
-    } except Exception {
-        
+    } except Exception as e {
+        # A lost frame leaves node's mirror (routines, webhooks, …) stale
+        # until the next frame or a refresh; never fail the op over it, but
+        # leave a trace.
+        print(f"routines: emit {payload.get('kind')} failed: {e}", file=sys.stderr, flush=True);
     }
 }
 

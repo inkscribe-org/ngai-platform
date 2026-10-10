@@ -393,6 +393,18 @@ const mirrorRunById = new Map<string, RoutineRun>();
 
 function mirrorRoutine(routine: Routine): void {
   mirrorRoutines.set(routine.id, routine);
+  // Stamp rows are derived from installedPackage (routine_package_stamps
+  // does the same Jac-side); keep them in step with every routine update.
+  if (routine.installedPackage) {
+    mirrorStampRows.set(routine.id, {
+      routineId: routine.id,
+      botId: routine.botId,
+      enabled: routine.enabled,
+      stamp: routine.installedPackage,
+    });
+  } else {
+    mirrorStampRows.delete(routine.id);
+  }
 }
 
 function mirrorPutRun(run: RoutineRun): void {
@@ -599,8 +611,13 @@ export const jacRoutines = {
   packageStamps: async (): Promise<RoutinePackageStampRow[]> =>
     (await jacOp<StampsResult>("routine_package_stamps")).stamps ?? [],
 
-  stampInstalledPackage: async (id: string, stamp: RoutinePackageStamp): Promise<boolean> =>
-    (await jacOp<{ stamped?: boolean }>("routine_stamp_installed_package", { id, stamp })).stamped === true,
+  stampInstalledPackage: async (id: string, stamp: RoutinePackageStamp): Promise<boolean> => {
+    const stamped = (await jacOp<{ stamped?: boolean }>("routine_stamp_installed_package", { id, stamp })).stamped === true;
+    // The op emits no frame; reflect the stamp in the mirror ourselves.
+    const routine = mirrorRoutines.get(id);
+    if (stamped && routine) mirrorRoutine({ ...routine, installedPackage: stamp });
+    return stamped;
+  },
 
   wakeHold: (horizonMs?: number): Promise<RoutineWakeHold> =>
     jacOp<RoutineWakeHold>("routine_wake_hold", horizonMs === undefined ? {} : { horizon_ms: horizonMs }),
