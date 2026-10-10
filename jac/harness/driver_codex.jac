@@ -212,6 +212,19 @@ def _request(a: dict[str, any], method: str, params: any, timeout_ms: float = RP
     return rec["result"];
 }
 
+# The reader thread (_on_close) and the handshake thread (_handshake_failed)
+# can both decide to retry one attempt; exactly one may retire it.
+def _claim_retry(a: dict[str, any]) -> bool {
+    a["lock"].acquire();
+    try {
+        if a["abandoned"] or a["settled"] { return False; }
+        a["abandoned"] = True;
+        return True;
+    } finally {
+        a["lock"].release();
+    }
+}
+
 def _reject_all(a: dict[str, any], message: str) {
     a["lock"].acquire();
     try {
@@ -267,9 +280,18 @@ def _resolve_response(inst: dict[str, any], lt: dict[str, any], a: dict[str, any
         a["starting_native_turn"] = False;
         early = list(a["early"]);
         a["early"].clear();
-        for notification in early {
-            if a["settled"] { break; }
-            _handle_notification(inst, lt, a, notification);
+        try {
+            for notification in early {
+                if a["settled"] { break; }
+                _handle_notification(inst, lt, a, notification);
+            }
+        } except Exception as e {
+            # rec is already out of `pending`: no timeout or _reject_all can
+            # wake the handshake's _request any more, so fail it here (the
+            # reader loop still logs the raise).
+            rec["error"] = e;
+            rec["event"].set();
+            raise;
         }
     }
     rec["result"] = v;
@@ -526,7 +548,25 @@ def _handle_server_request(inst: dict[str, any], lt: dict[str, any], a: dict[str
     timer = threading.Timer(ASK_TIMEOUT_S, on_timeout);
     timer.daemon = True;
     timer_box["timer"] = timer;
-    a["asks"][request_id] = finish;
+    # Register under the attempt lock _settle takes: a turn that settled
+    # while this request was being read must not get a fresh ask (its
+    # request.opened would follow turn.completed and codex would wait on
+    # an answer nobody gives). Answer it now; nothing was announced.
+    a["lock"].acquire();
+    try {
+        late = a["settled"];
+        if not late { a["asks"][request_id] = finish; }
+    } finally {
+        a["lock"].release();
+    }
+    if late {
+        if is_question {
+            _send(a, {"jsonrpc": "2.0", "id": msg_id, "result": {"answers": {}}});
+        } else {
+            _send(a, {"jsonrpc": "2.0", "id": msg_id, "result": permission_result(False)});
+        }
+        return;
+    }
     timer.start();
     ev: dict[str, any] = {
         "type": "request.opened",
@@ -889,11 +929,12 @@ def _on_close(inst: dict[str, any], lt: dict[str, any], a: dict[str, any], rc: a
     # Safe re-dispatch: only when the app-server never acknowledged
     # turn/start and nothing was buffered — a replay cannot duplicate work.
     if not lt["stop_requested"] and a["codex_turn_id"] is None and len(a["early"]) == 0 and verdict["transient"] and a["attempt"] < RETRY_MAX_ATTEMPTS - 1 {
+        # Retire this attempt before anything else runs; if the handshake
+        # thread already retired it, its relaunch owns the turn.
+        if not _claim_retry(a) { return; }
         delay_ms = compute_backoff(a["attempt"]);
         next_attempt = a["attempt"] + 1;
         _emit(inst, lt, {"type": "turn.retrying", "attempt": next_attempt, "delayMs": delay_ms, "reason": verdict["reason"]});
-        # Retire this attempt before anything else runs.
-        a["abandoned"] = True;
 
         def relaunch() {
             if _proc_alive(a) and not _terminate(a) {
@@ -924,7 +965,12 @@ def _backoff_then_relaunch(inst: dict[str, any], lt: dict[str, any], a: dict[str
     if not lt["stop_requested"] {
         try {
             _launch_attempt(inst, lt, next_attempt);
-        } except Exception {
+        } except Exception as e {
+            # A pre-spawn failure (env, provider args, MCP mount) leaves the
+            # retired attempt as the live entry: without settling it the
+            # thread stays "running" and every later send is refused.
+            _emit(inst, lt, {"type": "runtime.error", "message": "codex relaunch failed: " + str(e)});
+            _settle(inst, lt, a, False, "spawn_error");
         }
     } else {
         _settle(inst, lt, a, False, "interrupted");
@@ -1365,13 +1411,12 @@ def _handshake_failed(inst: dict[str, any], lt: dict[str, any], a: dict[str, any
     # main's abandoned attempt never retries, nor does a session already
     # recovered once from canonical history, nor a turn Stop already asked
     # to end.
-    if not a["settled"] and not a["abandoned"] and not lt["recovered_missing_session"] and not lt["stop_requested"] and not needs_auth and verdict["transient"] and a["attempt"] < RETRY_MAX_ATTEMPTS - 1 and a["saw_stream_delta"] is False {
+    if not a["settled"] and not a["abandoned"] and not lt["recovered_missing_session"] and not lt["stop_requested"] and not needs_auth and verdict["transient"] and a["attempt"] < RETRY_MAX_ATTEMPTS - 1 and a["saw_stream_delta"] is False and _claim_retry(a) {
+        # This app-server never exits by itself: _claim_retry retired it and
+        # silences its late handlers before the replacement launches.
         delay_ms = compute_backoff(a["attempt"]);
         next_attempt = a["attempt"] + 1;
         _emit(inst, lt, {"type": "turn.retrying", "attempt": next_attempt, "delayMs": delay_ms, "reason": verdict["reason"]});
-        # This app-server never exits by itself: retire it and silence its
-        # late handlers before the replacement launches.
-        a["abandoned"] = True;
         if not _terminate(a) {
             _settle(inst, lt, a, False, "shutdown_timeout");
             return;

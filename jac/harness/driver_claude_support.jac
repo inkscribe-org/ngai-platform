@@ -7,12 +7,13 @@ import os;
 import re;
 import json;
 import hashlib;
+import threading;
 import urllib.request;
 import urllib.error;
 
 import from db { DATA_DIR }
 # Re-exported for the driver modules that import them from here.
-import from common { new_uuid, now_ms, redact_mask, redact_secrets_in_text }
+import from common { new_uuid, now_ms, redact_mask, redact_secrets_in_text, write_file_atomic }
 
 # ── CLI version floors (claude.ts CLAUDE_FLAG_FLOORS) ──────────────────────
 # Verified against the published binaries: an unknown flag is a hard argument
@@ -1030,7 +1031,17 @@ def read_cost_history() -> dict[str, any] {
     return out;
 }
 
+# Every session's stdout reader thread records here; the read-modify-write
+# must not interleave (a lost update wipes other sessions' history).
+glob _COST_LOCK: any = threading.Lock();
+
 def record_cost_state(session_id: str, state: dict[str, any]) {
+    with _COST_LOCK {
+        _record_cost_state_locked(session_id, state);
+    }
+}
+
+def _record_cost_state_locked(session_id: str, state: dict[str, any]) {
     history = read_cost_history();
     states: list[any] = list(history.get(session_id) or []);
     states.append(state);
@@ -1044,19 +1055,13 @@ def record_cost_state(session_id: str, state: dict[str, any]) {
             history.pop(id, None);
         }
     }
+    # Written after every turn, so not fsynced (claude.ts durable: false);
+    # atomic so a concurrent reader never sees a truncated file.
     try {
         os.makedirs(os.path.dirname(COST_HISTORY_FILE), exist_ok=True);
-        f = open(COST_HISTORY_FILE, "w", encoding="utf-8");
-        try {
-            f.write(json.dumps(history));
-        } finally {
-            f.close();
-        }
-        try {
-            os.chmod(COST_HISTORY_FILE, 0o600);
-        } except Exception {
-        }
+        write_file_atomic(COST_HISTORY_FILE, json.dumps(history), 0o600, False);
     } except Exception {
+        # a lost state only means a later resume keeps its whole figure
     }
 }
 
@@ -1152,17 +1157,14 @@ def claude_user_message(text: str, images: any) -> dict[str, any] {
     }
     content: list[any] = [];
     for image in images {
-        data = "";
+        # claude.ts readFileSync: a missing/unreadable attachment throws, so
+        # the turn fails here instead of sending an empty image block.
+        f = open(image.get("path"), "rb");
         try {
-            f = open(image.get("path"), "rb");
-            try {
-                import base64;
-                data = base64.b64encode(f.read()).decode("ascii");
-            } finally {
-                f.close();
-            }
-        } except Exception {
-            data = "";
+            import base64;
+            data = base64.b64encode(f.read()).decode("ascii");
+        } finally {
+            f.close();
         }
         content.append({"type": "image", "source": {"type": "base64", "media_type": image.get("mime"), "data": data}});
     }

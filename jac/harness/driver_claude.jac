@@ -348,8 +348,13 @@ def _arm_idle(inst: dict[str, any], thread_id: str) {
         } except Exception {
         }
     }
+    # _settle arms this after emitting turn.completed, and node may already
+    # have put the next turn on this warm session (op thread vs reader
+    # thread): a busy session is not idle.
+    if s.get("turn") is not None { return; }
 
     def fire() {
+        if inst["sessions"].get(thread_id) is not s or s.get("turn") is not None { return; }
         _close_session(inst, thread_id, "idle");
     }
     timer = threading.Timer(inst.get("idle_ms", 600000) / 1000.0, fire);
@@ -1701,7 +1706,10 @@ def _spawn_new_session(
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=False
+            text=False,
+            # procs.ts `detached: true`: _stop_tree signals the whole group
+            # (kill(-pid)) so the MCP helpers die with the CLI.
+            start_new_session=(os.name != "nt")
         );
     } except Exception as e {
         _cleanup_launch_resources(inst, thread_id, broker, mcp_config_path, system_prompt_path);
@@ -1908,6 +1916,11 @@ def _generate_review(inst: dict[str, any], prompt: str) -> str {
     } except Exception {
         try {
             proc.kill();
+        } except Exception {
+        }
+        # Reap it (and close its pipes) so a failed review leaves no zombie.
+        try {
+            proc.communicate();
         } except Exception {
         }
         raise;
