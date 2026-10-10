@@ -126,13 +126,19 @@ app/
   (SSE) replaces `/api/events` (never a sync generator — it stalls the
   server loop; research R4). The `cl` side reads it with
   `fetch().body.getReader()` (RPC stubs buffer; EventSource is GET-only).
-- **Persistence:** decided in WS-A2. Default assumption: keep our on-disk
-  formats (bots.json/groups.json/config.json, `messages.db`, routines.json,
-  webhooks.json, …) as plain files/sqlite under the app data dir, with the
-  OSP graph used for in-memory relationships and derived state — because
-  the Jac graph store is always the machine-wide embedded Postgres
-  (downloaded on first run, POSIX-only; research §4/R2), which would make
-  offline installs fail and changes every user's data format.
+- **Persistence (decided 2026-10-10, WS-A2): the Jac graph store on
+  Postgres is the source of truth** — the domain model is persistent OSP
+  (nodes, edges, walkers over `root`). Today's files (bots.json,
+  groups.json, routines.json, webhooks.json, `messages.db`, …) become
+  *import/export formats*, read once by a migration importer (WS-C2a) and
+  written only by export/backup. Consequences carried through this plan:
+  Postgres must ship inside the app and be per-app (upstream #9944 is now
+  blocking, WS-F2); Windows Postgres becomes required in WS-U1; every
+  request is a SERIALIZABLE transaction replayed on conflict, so engine
+  subprocesses, streaming and other side effects stay outside transactions
+  (`on_commit`); workspace backup/restore must capture the database
+  (WS-C2b); the per-request Postgres session setup cost (40–60 ms/op in
+  profiling) must be fixed upstream (§14).
 - **Engines:** engine CLIs (claude, codex, pi, ACP agents, …) are spawned
   from sv code exactly as today's Jac drivers do. The stdio helper
   processes engines need (permission proxy, MCP gate, agents MCP, hooks,
@@ -178,13 +184,19 @@ stdio proxies.
 
 ## 3. Principles and conventions (apply to every workstream)
 
-1. **Faithful port, then improve.** Behaviour parity first (on-disk bytes,
-   error texts/status codes, event order), proven by ported tests; refactor
-   only after parity is green. Known TS bugs found during the port are
+1. **Faithful port, then improve.** Behaviour parity first (wire shapes,
+   error texts/status codes, event order; on-disk bytes now hold at the
+   import/export boundary — the graph is the store, A2), proven by ported
+   tests; refactor only after parity is green. Known TS bugs found during the port are
    fixed in a separate commit, named in the PR.
-2. **One writer per file/table at all times** (migration plan seam rule 1).
+2. **One writer per file/table/node type at all times** (migration plan seam rule 1).
    When a workstream moves a writer from node to Jac (e.g. the store), it
    flips in one commit and deletes the node writer.
+2a. **Persistent OSP (A2):** domain state is nodes/edges under the
+   owner's root in the graph store; module globals hold only live,
+   non-durable things (subprocess handles, open streams, caches) keyed by
+   node ids, and are rebuilt on restart from the graph. Side effects inside
+   a request go through `on_commit` (requests replay on conflict).
 3. **Module layout:** one Jac module per subsystem in the target `app/`
    layout (§2.1); `common.jac` for shared helpers (do not re-copy guard,
    atomic write, redact, uuid, time — the 2026-10-10 review consolidated
@@ -348,14 +360,24 @@ on a disposable machine/VM, not on the shared dev box.
   store is always the machine-wide embedded Postgres (downloaded from Maven
   Central on first run; POSIX only; shared with any developer `jac`
   install) — upstream #9944.
-- **Options:** (1) keep files + sqlite (today's formats) as the source of
-  truth, graph in memory only; (2) graph-persisted with Postgres bundled via
-  `JAC_PG_DIST` from the app; (3) hybrid — durable domain records in
-  files/sqlite, ephemeral relationships in the graph.
-- **Recommendation:** (1)/(3) until #9944 lands, because it keeps every
-  existing user's data and backups (`.ombbackup`) valid with no migration,
-  works offline, and matches what M1–M4 already ported byte-for-byte.
-- **Done when:** decision recorded; if (2), a measured offline-install test.
+- **Decision (2026-10-10): option (2) — graph store on Postgres is the
+  source of truth**, chosen so the domain is genuinely OSP (persistent
+  nodes/edges/walkers), not files with an in-memory graph.
+- **Spike scope now:** (a) bundle Postgres with the app via `JAC_PG_DIST`
+  set by the host/launcher and prove an **offline first run** works;
+  (b) per-app isolation — the app must not share the machine-wide cluster
+  at `~/.cache/jac/pg/main` with developer `jac` installs (database name is
+  keyed by base path, but the cluster, socket dir and versions are shared
+  — #9944); (c) write throughput for streaming turns: message appends +
+  TurnEvent nodes at Claude's peak (~60 events/s) inside per-request
+  transactions, with conflict-replay rates measured; (d) graph size at a
+  heavy user's scale (100k+ messages) — query latency for thread pages and
+  search; (e) how long-lived turn state (subprocess handles, open
+  streams) lives *outside* the graph (module state keyed by node id) and
+  reconciles on restart; (f) whether `messages.db` full-text search moves
+  to Postgres FTS or stays a derived sqlite index.
+- **Done when:** spike write-up with numbers for (a)–(f); the node/edge
+  schema for C2 drafted (§2.2 model, persisted).
 
 ### A3. Child processes from the desktop binary
 - **Question:** engines spawn helper processes by *command line* (MCP
@@ -402,8 +424,8 @@ on a disposable machine/VM, not on the shared dev box.
   through our own PRs (WS-U1), scheduled after the Linux/Apple Silicon app
   works. Until those PRs land, the Jac app ships on Linux and Apple
   Silicon only; existing Windows/Intel-mac Electron installs are not
-  updated further (their data dir stays readable by the Jac app — A2
-  option 1 — so moving them later is a fresh install, no migration).
+  updated further; when U1 lands they install the Jac app and the C2a
+  importer brings their data dir into the graph.
 
 ---
 
@@ -515,18 +537,30 @@ Common to every C workstream:
   O (message pages), routes: /api/bots (create/edit/delete/model/profile/
   soul/history/projects/tasks), /api/threads, /api/attachments,
   /api/files, /api/search, /api/sidebar-sections, /api/bot-defaults.
-- **Key step:** flip the writer. Jac already has `store.jac`, `messages.jac`,
-  `db.jac`, `checkpoints.jac` byte-faithful (conformance-proven). Flip:
-  Jac becomes the only writer of bots.json/groups.json/messages.db/
-  checkpoints; node's `Store` becomes a read-only client over C0's proxy
-  for whatever node code remains, then disappears.
+- **Key step (graph store, A2):** persist `Bot`, `Thread`, `Task`,
+  `Room`, `Message` as nodes under the owner's root. The byte-faithful
+  file modules from M1 (`store.jac`, `messages.jac`, `db.jac`) become the
+  **importer's readers** (C2a) and the export writers; during the overlap
+  node's `Store` reads through C0's proxy and stops writing in one commit.
+- **C2a. Migration importer:** first launch of the Jac app (and the F4
+  bridge) imports an existing `~/.openmausbot` data dir — bots.json,
+  groups.json, config.json, messages.db, routines.json, webhooks.json,
+  team-computers.json, memory files, attachments index — into the graph,
+  idempotently (re-runnable, keyed by source ids), recording a receipt.
+  Conformance corpora become importer fixtures: import → export must
+  reproduce today's bytes.
+- **C2b. Backups on the graph:** `.ombbackup` export/restore and team
+  backups read/write the graph (export via the same writers as C2a, plus
+  attachments/workspace files); restore = import into a fresh database.
+  Keeps old `.ombbackup` files restorable.
 - **OSP:** `Bot`, `Thread`, `Task`, `Message` nodes as the in-memory model
   hydrated from the files (graph.jac already hydrates threads); `Owns`,
   `Next`, `Contains` edges. Store change events become event-feed frames
   (C3) instead of `store.onChange → broadcast`.
-- **Done when:** node no longer writes any of these files; store/message-db
-  TS deleted; conformance corpora still byte-identical; `store.test.ts`
-  (2,532 LOC) invariants ported.
+- **Done when:** the graph is the only live store; node no longer writes
+  any of these files; store/message-db TS deleted; import→export of the
+  conformance corpora is byte-identical; `store.test.ts` (2,532 LOC)
+  invariants ported against the graph.
 
 ### C3. Turn pipeline, rooms, event feed (the heart)
 - **Scope (TS):** index.ts sections H (dispatch claims/resources), N (rooms
@@ -838,6 +872,10 @@ inventory; upstream issue numbers in §14):
   and webview library sign cleanly.
 - Python deps must be vendored into the bundle (the launcher's relative
   `.jac/venv` path breaks relocation — #9947).
+- **Postgres ships in the app** (A2): bundle the platform Postgres
+  distribution, point `JAC_PG_DIST` at it from the host/launcher, keep the
+  cluster under the app data dir (not the shared `~/.cache/jac/pg/main`),
+  and prove offline first launch in CI. Blocked/eased by #9944.
 - New CI: build + smoke the Jac app (launch, `/api/health`, one scripted
   turn with a fake engine via `JAC_DESKTOP_SERVING` loopback origin);
   replaces packaged-server smoke, macOS smokes, package + smoke for these
@@ -857,7 +895,8 @@ inventory; upstream issue numbers in §14):
      re-stores the secrets in the OS keychain the Jac app reads;
   2. downloads + verifies the Jac app, installs it, migrates the
      single-instance/deep-link registration, and launches it;
-  3. leaves the data dir untouched (same formats — A2).
+  3. leaves the data dir untouched; the Jac app's first launch runs the
+     C2a importer into its graph (the files stay as the rollback copy).
 - Windows / Intel macOS: no bridge release until WS-U1 lands (A6); then
   the same bridge flow (secrets migration needs the Electron-side decrypt,
   so the Windows bridge release ships from the last Electron build).
@@ -923,11 +962,10 @@ COFF/PE linker (`jaclang/compiler/backends/native/pe_linker.jac`) and
    the running `jac` binary; jaseci publishes no Windows `jac`. Needs the
    Windows build of the fused runtime in jaseci's release pipeline (and the
    Intel-mac build, broken per #8805).
-3. **Postgres helper on Windows** — `data/impl/pgembed.impl.jac`
-   `_platform_slug` knows only Linux/Darwin and locks with `fcntl`; add the
-   `windows-amd64` zonky slug and a Windows file lock (`msvcrt.locking`).
-   May be moot for us if A2 keeps the desktop host off the graph store —
-   confirm in A1 whether the host boots without Postgres.
+3. **Postgres helper on Windows (required — A2 uses the graph store)** —
+   `data/impl/pgembed.impl.jac` `_platform_slug` knows only Linux/Darwin
+   and locks with `fcntl`; add the `windows-amd64` zonky slug, a Windows
+   file lock (`msvcrt.locking`), and Windows socket/port handling.
 4. Path/data-dir and process differences surfaced by our app (process
    groups → job objects for engine CLIs, `killpg` → `TerminateJobObject`).
 - **Process:** AGENTS §3 — minimal repro per gap, feature branch off
@@ -946,7 +984,7 @@ COFF/PE linker (`jaclang/compiler/backends/native/pe_linker.jac`) and
 | Issue | Gap | Blocks | Workaround while open |
 |---|---|---|---|
 | #9943 | Windows (WebView2) + Intel macOS desktop hosts | F2/F4 on those platforms | **we implement it upstream (WS-U1)**; no Electron fallback (A6) |
-| #9944 | bundled/offline, per-app embedded DB | A2 option 2 | files + sqlite (A2 option 1) |
+| #9944 | bundled/offline, per-app embedded DB | **A2 (decided: graph store) and F2 — blocking** | bundle PG ourselves via `JAC_PG_DIST`; separate cluster dir; send the fix upstream |
 | #9945 | app-supplied native capability plugins | many F1 rows | sv-side Python where possible |
 | #9946 | release build may omit colocated service apps | A1, all of C in the shipped app | A1 topology options (b)–(d) |
 | #9947 | non-relocatable release (venv path; Linux data dir) | F2 | vendor deps; set `JAC_DATA_PATH` |
@@ -971,10 +1009,13 @@ COFF/PE linker (`jaclang/compiler/backends/native/pe_linker.jac`) and
 | #6675 | positional-only args across `@jac/desktop` | F1 | pass positionally |
 | #9683 | compile cache keyed on mtime | CI warm cache | pin mtimes in CI (done) |
 | #8805 | Intel macOS build broken/non-blocking | #9943 | — |
+| #9959 | embedded PG `ensure()` re-runs every request: no-op `def:pub` 40–60 ms, two transactions | every UI call + streamed-turn write (A2) | none app-side (`JAC_DB_URL` can't address the embedded socket); fix upstream |
+| #9164 | redundant compilation (we added: every module compiled twice, pass 2 = 79 % of cold compile) | A5, dev loop, CI | CI warm cache |
+| #9411 | three commits per walker request, each re-hashing every loaded anchor | walker-heavy endpoints (A2 throughput) | — |
 
-Also from profiling (file if not yet): every module compiled twice (79 %
-of compile CPU); Postgres setup on every request (40–60 ms/op) — not
-relevant if A2 keeps us off the graph store, still worth filing.
+Profiling findings are tracked as #9959 (per-request Postgres setup —
+**now on our hot path** since A2 chose the graph store) and #9164
+(double compile; our numbers added).
 
 ---
 
@@ -983,7 +1024,7 @@ relevant if A2 keeps us off the graph store, still worth filing.
 | WS | Title | Status | Owner | PR |
 |---|---|---|---|---|
 | A1 | Desktop topology spike | not started | | |
-| A2 | Persistence decision | not started | | |
+| A2 | Persistence | decided: graph store on Postgres; spike (a)–(f) not started | | |
 | A3 | Helper processes without node | not started | | |
 | A4 | Event feed prototype | not started | | |
 | A5 | Compile cost | partial (CI warm cache + mtime pin done) | | #1 |
@@ -1015,7 +1056,7 @@ contract duplicate → C11; dual store/message-db writers → C2.
 | Risk | Impact | Mitigation |
 |---|---|---|
 | A1 shows the release build can't host our service app | blocks everything shipped | options (b)–(d); upstream #9946; single-app fallback |
-| Embedded Postgres becomes unavoidable | offline installs fail; data migration | A2 option 1; #9944 |
+| Graph store on Postgres (A2) | offline first run, shared cluster, per-request latency, conflict replays under streaming load, data migration of every existing user | A2 spike (a)–(f); bundle PG (F2); C2a importer with receipts; upstream #9944 + per-request setup fix |
 | Compile time grows with every port (~148 s CI cold today; minutes locally) | slow dev loop, CI cost | A5; keep annexes lean; data-ify generated modules; upstream double-compile issue |
 | `cl` has no DOM test harness | UI regressions | UI e2e suite against the loopback origin (E0) |
 | No WebSocket in the embedded backend | noVNC viewer, webhook listener | sv raw listeners; #9948 |
@@ -1031,7 +1072,9 @@ contract duplicate → C11; dual store/message-db writers → C2.
 
 1. ~~A6 platform policy~~ **decided 2026-10-10:** no Electron fallback;
    Windows/Intel macOS via our upstream PRs (WS-U1).
-2. **A2 persistence** — confirm files + sqlite remain the source of truth.
+2. ~~A2 persistence~~ **decided 2026-10-10:** the Jac graph store on
+   Postgres is the source of truth (persistent OSP); files become
+   import/export formats (C2a, C2b).
 3. **G2 hosted tier** — per feature: port / separate TS server / drop
    (boat, VPS, cloud home/lending/move, fleet, tunnel, custom domain,
    voice/live calls/TTS, phone).

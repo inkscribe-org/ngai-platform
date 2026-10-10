@@ -240,6 +240,11 @@ core turn pipeline on the runtime.
 6. ~~Client migration~~ **decided 2026-10-07**: `src/` ports to Jac `cl`
    JSX in phase 6 — a committed rewrite, per-subtree, on the wire
    contract until each subtree's cutover, then Jac RPC.
+8. ~~Persistence~~ **decided 2026-10-10**: the Jac graph store on
+   Postgres is the source of truth (persistent OSP). Today's JSON/sqlite
+   files become import/export formats (one-time importer for existing
+   users; backups export/restore through it). Postgres ships inside the
+   app (jaseci-labs/jac#9944). Impl plan WS-A2, C2a, C2b, F2.
 7. ~~Desktop build target~~ **decided 2026-10-10**: Jac's `desktop` app
    kind (jac-desktop, in jaclang core; beta). `[apps.<name>] kind =
    "desktop"`; `jac build <app>` → `.jac/client/desktop/<app>`, one native
