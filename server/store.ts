@@ -9,7 +9,11 @@ import { join } from "node:path";
 import { writeFileAtomic, writeFileAtomicIfChanged } from "./atomic.ts";
 import { parseToolScope, toolScopeWidens } from "../shared/tool-scope.ts";
 import { ensureSections, readSections, changeEmptySection } from "./section-context.ts";
-import type { TeamComputers } from "./team-computers.ts";
+/** The team-computer registry as renameSection needs it (server/jac-computers.ts). */
+export interface SectionComputers {
+  forSection(section: string | undefined): unknown;
+  renameSection(from: string, to: string): boolean;
+}
 import { removeBotFolder, soulFile, soulHash, writeSoulMirror } from "./bot-folder.ts";
 import type { BotProfilePatch } from "./bot-profile.ts";
 import { peerAllowKey, type PeerAction } from "./peer-approval-key.ts";
@@ -1077,7 +1081,7 @@ export class Store {
   }
 
   /** Rename the same team, preserving its members and existing access grants. */
-  renameSection(name: string, nextName: string, computers?: TeamComputers): string | undefined {
+  renameSection(name: string, nextName: string, computers?: SectionComputers): string | undefined {
     if (!name || !this.sections.includes(name)) return "No such team";
     nextName = nextName.trim();
     if (!nextName || nextName.length > 60 || [...nextName].some(char => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127)) return "Team name must be 1 to 60 characters without control characters";

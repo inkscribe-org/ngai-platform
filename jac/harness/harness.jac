@@ -495,3 +495,84 @@ glob workspace_backup_remove_job: any = _workspace_backup_remove_job;
 import from driver_openai_chat {
     create_openai_chat_runtime as _openai_chat_create_runtime,
 }
+
+# --- computers module HTTP surface (computer_control, team_computers, -----
+# --- shared_computers, container_computer, local_computer) ---------------
+import from computer_control {
+    computer_control_list as _computer_control_computer_control_list,
+    computer_control_take as _computer_control_computer_control_take,
+    computer_control_release as _computer_control_computer_control_release,
+    computer_control_acquire_lease as _computer_control_computer_control_acquire_lease,
+    computer_control_release_lease as _computer_control_computer_control_release_lease,
+    computer_control_request_help as _computer_control_computer_control_request_help,
+    computer_control_dismiss_help as _computer_control_computer_control_dismiss_help,
+    computer_control_expire_help as _computer_control_computer_control_expire_help,
+    computer_control_forget as _computer_control_computer_control_forget,
+    shared_control_lease as _computer_control_shared_control_lease,
+    shared_control_close as _computer_control_shared_control_close,
+}
+glob computer_control_list: any = _computer_control_computer_control_list;
+glob computer_control_take: any = _computer_control_computer_control_take;
+glob computer_control_release: any = _computer_control_computer_control_release;
+glob computer_control_acquire_lease: any = _computer_control_computer_control_acquire_lease;
+glob computer_control_release_lease: any = _computer_control_computer_control_release_lease;
+glob computer_control_request_help: any = _computer_control_computer_control_request_help;
+glob computer_control_dismiss_help: any = _computer_control_computer_control_dismiss_help;
+glob computer_control_expire_help: any = _computer_control_computer_control_expire_help;
+glob computer_control_forget: any = _computer_control_computer_control_forget;
+glob shared_control_lease: any = _computer_control_shared_control_lease;
+glob shared_control_close: any = _computer_control_shared_control_close;
+import from team_computers {
+    team_computer_load as _team_computers_team_computer_load,
+    team_computer_list as _team_computers_team_computer_list,
+    team_computer_create as _team_computers_team_computer_create,
+    team_computer_assign as _team_computers_team_computer_assign,
+    team_computer_set_problem as _team_computers_team_computer_set_problem,
+    team_computer_rename_section as _team_computers_team_computer_rename_section,
+}
+glob team_computer_load: any = _team_computers_team_computer_load;
+glob team_computer_list: any = _team_computers_team_computer_list;
+glob team_computer_create: any = _team_computers_team_computer_create;
+glob team_computer_assign: any = _team_computers_team_computer_assign;
+glob team_computer_set_problem: any = _team_computers_team_computer_set_problem;
+glob team_computer_rename_section: any = _team_computers_team_computer_rename_section;
+import from shared_computers {
+    shared_computer_register as _shared_computers_shared_computer_register,
+    shared_computer_list as _shared_computers_shared_computer_list,
+    shared_computer_status as _shared_computers_shared_computer_status,
+    shared_computer_poll as _shared_computers_shared_computer_poll,
+    shared_computer_live_job as _shared_computers_shared_computer_live_job,
+    shared_computer_complete as _shared_computers_shared_computer_complete,
+    shared_computer_disconnect as _shared_computers_shared_computer_disconnect,
+    shared_computer_request as _shared_computers_shared_computer_request,
+    shared_computer_close as _shared_computers_shared_computer_close,
+}
+glob shared_computer_register: any = _shared_computers_shared_computer_register;
+glob shared_computer_list: any = _shared_computers_shared_computer_list;
+glob shared_computer_status: any = _shared_computers_shared_computer_status;
+glob shared_computer_poll: any = _shared_computers_shared_computer_poll;
+glob shared_computer_live_job: any = _shared_computers_shared_computer_live_job;
+glob shared_computer_complete: any = _shared_computers_shared_computer_complete;
+glob shared_computer_disconnect: any = _shared_computers_shared_computer_disconnect;
+glob shared_computer_request: any = _shared_computers_shared_computer_request;
+glob shared_computer_close: any = _shared_computers_shared_computer_close;
+import from container_computer {
+    computer_runtime_status as _container_computer_computer_runtime_status,
+    computer_vm_status as _container_computer_computer_vm_status,
+    computer_vm_action as _container_computer_computer_vm_action,
+    computer_vm_exists as _container_computer_computer_vm_exists,
+    computer_vm_frame as _container_computer_computer_vm_frame,
+    computer_vm_exec as _container_computer_computer_vm_exec,
+}
+glob computer_runtime_status: any = _container_computer_computer_runtime_status;
+glob computer_vm_status: any = _container_computer_computer_vm_status;
+glob computer_vm_action: any = _container_computer_computer_vm_action;
+glob computer_vm_exists: any = _container_computer_computer_vm_exists;
+glob computer_vm_frame: any = _container_computer_computer_vm_frame;
+glob computer_vm_exec: any = _container_computer_computer_vm_exec;
+import from local_computer {
+    computer_cua_connection as _local_computer_computer_cua_connection,
+    computer_cua_unavailable_reason as _local_computer_computer_cua_unavailable_reason,
+}
+glob computer_cua_connection: any = _local_computer_computer_cua_connection;
+glob computer_cua_unavailable_reason: any = _local_computer_computer_cua_unavailable_reason;

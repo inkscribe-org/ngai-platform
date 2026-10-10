@@ -18,7 +18,6 @@ import { canAccessTeam } from "./peer-roster.ts";
 import { Store, toWireTask, type BotRecord } from "./store.ts";
 import type { TeamSetupRequest } from "../shared/team-setup.ts";
 import { SECTION_CONTEXTS_FILE, readSectionContext, writeSectionContext } from "./section-context.ts";
-import { TeamComputers } from "./team-computers.ts";
 import { allowsTool } from "../shared/tool-scope.ts";
 
 const selection = (): ModelSelection => ({ instanceId: "claude", model: "claude-sonnet-5" });
@@ -175,9 +174,17 @@ describe("Store", () => {
     const room = store.createGroup("Room", [chief.id], false, "Delivery");
     const message = store.appendMessage(chief.threadId, { role: "user", kind: "text", text: "Keep this conversation" });
     writeSectionContext("Delivery", "Shared team instructions");
-    const computers = new TeamComputers(join(DATA_DIR, "team-computers.json"), "5c57ceec-f5aa-4d79-a9c7-0e1f93875e70");
-    const computer = computers.create("Shared desktop");
-    computers.assign(computer.id, "Delivery");
+    // The registry itself lives in jac/harness/team_computers.jac; this is
+    // the section-relabel contract Store.renameSection drives.
+    const computer = { id: "5c57ceec-f5aa-4d79-a9c7-0e1f93875e70", section: "Delivery" as string | null };
+    const computers = {
+      forSection: (section: string | undefined) => computer.section !== null && computer.section === (section?.trim() || "") ? computer : undefined,
+      renameSection: (from: string, to: string) => {
+        if (computer.section !== from || from === to) return false;
+        computer.section = to;
+        return true;
+      },
+    };
     expect(store.renameSection("Delivery", "Launch", computers)).toBeUndefined();
     expect(store.bot(chief.id)).toBe(chief);
     expect(chief).toMatchObject({ section: "Launch", chiefOfStaff: true });

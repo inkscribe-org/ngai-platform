@@ -12,7 +12,6 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { freePortBlock } from "./testing/ports.ts";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
-import { readCuaConnection } from "./local-computer.ts";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 
@@ -322,14 +321,8 @@ describe("surface pin provenance against the real server", () => {
       mcpCommand: "/fixture/cua-driver", mcpArgs: ["mcp"], mcpEnv: {},
     }), { mode: 0o600 });
     try {
-      // Validate the fixture on every host before waiting for a provider.
-      // The obsolete "bundled" shape is refused, so no dump can ever arrive.
-      // Windows cannot emulate the POSIX ownership check used on macOS.
-      const platforms: NodeJS.Platform[] = process.platform === "win32" ? ["win32"] : ["darwin", "win32"];
-      for (const platform of platforms) {
-        expect(readCuaConnection({ platform, userData: dirname(cuaDescriptor), home }))
-          .toMatchObject({ command: "/fixture/cua-driver", platform, scope: "local-computer" });
-      }
+      // The descriptor reader lives in jac/harness/local_computer.jac; its
+      // test annex pins that this legacy darwin/win32 fixture shape decodes.
       // The incident's other half: the person's pin still wins the mount.
       // Linux requires a separately validated native runtime descriptor.
       if (process.platform !== "linux") {

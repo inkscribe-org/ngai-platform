@@ -1,5 +1,5 @@
+import { containerComputerExists } from "./jac-computers.ts";
 import {
-  containerComputerExists,
   perBotLocalVmTarget,
   poolLocalVmTarget,
   type ContainerComputerStatus,

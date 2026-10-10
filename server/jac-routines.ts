@@ -346,8 +346,20 @@ export function jacOpUnordered<T = unknown>(
   args: Record<string, unknown> = {},
   timeoutMs = OP_TIMEOUT_MS,
 ): Promise<T> {
-  return jacOpRaw(name, args, timeoutMs) as Promise<T>;
+  if (timeoutMs <= FETCH_HEADERS_LIMIT_MS) return jacOpRaw(name, args, timeoutMs) as Promise<T>;
+  // fetch (undici) gives up waiting for response headers at 300s whatever
+  // the signal says; longer budgets (Local VM image builds) use the raw
+  // http transport with our own deadline.
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(Object.assign(new Error(`jac op ${name} timed out after ${timeoutMs}ms`), { status: 503 })),
+      timeoutMs,
+    );
+  });
+  return Promise.race([jacLongOpRaw(name, args), deadline]).finally(() => clearTimeout(timer)) as Promise<T>;
 }
+const FETCH_HEADERS_LIMIT_MS = 290_000;
 
 /** A long op (no timeout). `serialize: true` holds the op chain for its
  * whole duration — the quiesce a workspace snapshot or restore commit
