@@ -39,6 +39,13 @@ import {
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(SERVER_DIR, "..");
 const JAC_BIN = resolveJacBinary(process.env);
+// Every spawned server's Jac sidecar: HOME is redirected per server, so
+// pass the pinned binary and the operator's cache (runtime extraction,
+// Postgres socket dir) or each one unpacks the ~830MB runtime afresh.
+const JAC_ENV = {
+  ...(JAC_BIN ? { OMB_JAC_BIN: JAC_BIN } : {}),
+  XDG_CACHE_HOME: process.env.XDG_CACHE_HOME || join(homedir(), ".cache"),
+};
 const FAKE_CLAUDE_CLI = join(SERVER_DIR, "testing", "fake-claude-cli.ts");
 const FAKE_MCP_SERVER = join(SERVER_DIR, "testing", "fake-mcp-server.ts");
 const PORT = 18800 + Math.floor(Math.random() * 10_000);
@@ -1199,11 +1206,7 @@ beforeAll(async () => {
       // the real CLI runs Manual for these even when asked for auto
       FAKE_CLAUDE_AUTO_UNAVAILABLE_MODELS: "claude-haiku-4-5",
       OMB_TEST_INTERNAL_CAPABILITY_KEY: TEST_CAPABILITY_KEY,
-      // The Jac harness (routines, webhooks, drivers): HOME is redirected
-      // above, so resolve the pinned jacup binary from the real one, and
-      // reuse the operator's jac runtime extraction + Postgres socket dir.
-      ...(JAC_BIN ? { OMB_JAC_BIN: JAC_BIN } : {}),
-      XDG_CACHE_HOME: process.env.XDG_CACHE_HOME || join(homedir(), ".cache"),
+      ...JAC_ENV,
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -1334,6 +1337,7 @@ describe("harness HTTP API", () => {
           ...(process.env.PATHEXT ? { PATHEXT: process.env.PATHEXT } : {}),
           ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
           HOME: isolatedHome,
+          ...JAC_ENV,
           USERPROFILE: isolatedHome,
           OMB_PORT: String(isolatedPort),
           OMB_WEBHOOK_PORT: String(isolatedPort + 1),
@@ -3623,6 +3627,7 @@ describe("harness HTTP API", () => {
         ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
         ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
         HOME: isolatedHome,
+        ...JAC_ENV,
         USERPROFILE: isolatedHome,
         OMB_PORT: String(isolatedPort),
         OMB_WEBHOOK_PORT: String(isolatedPort + 1),
@@ -3865,6 +3870,7 @@ describe("harness HTTP API", () => {
         ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
         ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
         HOME: isolatedHome,
+        ...JAC_ENV,
         USERPROFILE: isolatedHome,
         OMB_PORT: String(isolatedPort),
         OMB_WEBHOOK_PORT: String(isolatedPort + 1),
@@ -5429,6 +5435,7 @@ describe("harness HTTP API", () => {
         ...(process.env.PATHEXT ? { PATHEXT: process.env.PATHEXT } : {}),
         ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
         HOME: isolatedHome,
+        ...JAC_ENV,
         USERPROFILE: isolatedHome,
         OMB_PORT: String(isolatedPort),
         OMB_WEBHOOK_PORT: String(isolatedPort + 1),
@@ -6427,6 +6434,7 @@ describe("harness HTTP API", () => {
           ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
           ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
           HOME: isolatedHome,
+          ...JAC_ENV,
           USERPROFILE: isolatedHome,
           OMB_PORT: String(isolatedPort),
           OMB_WEBHOOK_PORT: String(isolatedPort + 1),
@@ -9200,6 +9208,7 @@ describe("harness HTTP API", () => {
           ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
           ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
           HOME: isolatedHome,
+          ...JAC_ENV,
           USERPROFILE: isolatedHome,
           OMB_PORT: String(isolatedPort),
           OMB_WEBHOOK_PORT: String(isolatedPort + 1),
