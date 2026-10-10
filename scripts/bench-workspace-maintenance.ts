@@ -13,7 +13,9 @@ process.env.OMB_DATA_DIR = directory;
 const db = await import("../server/message-db.ts");
 const { Store } = await import("../server/store.ts");
 const memory = await import("../server/workspace.ts");
-const backups = await import("../server/workspace-backup.ts");
+// The snapshot runs in the Jac harness (spawned on first use, stopped below).
+const backups = await import("../server/jac-workspace-backup.ts");
+const jac = await import("../server/jac-routines.ts");
 const inline = process.argv.includes("--in-process");
 console.log(JSON.stringify({ node: process.version, platform: process.platform, arch: process.arch, inline,
   scope: "Synthetic file-backed method pressure, not HTTP throughput or production capacity." }));
@@ -60,13 +62,13 @@ try {
   writeFileSync(join(directory, "attachments", "synthetic.bin"), Buffer.alloc(1024 * 1024, 0x31));
   db.closeMessageDb(); await delay(1000);
   await measure("workspace-backup-50000-messages-1100-memory-files", async () => {
-    const create = inline ? backups.createWorkspaceBackupSnapshot : backups.createWorkspaceBackup;
-    const backup = await create(directory, { password: "synthetic benchmark password only", appVersion: "test" });
+    const backup = await backups.createWorkspaceBackup(directory, { password: "synthetic benchmark password only", appVersion: "test" });
     assert.equal(backup.summary.messages, 50_000);
     return { files: backup.summary.files, bytes: backup.summary.bytes, messages: backup.summary.messages };
   });
 } finally {
   db.closeMessageDb();
+  jac.stopJacHarness();
   if (previousDataDir === undefined) delete process.env.OMB_DATA_DIR;
   else process.env.OMB_DATA_DIR = previousDataDir;
   rmSync(directory, { recursive: true, force: true });

@@ -531,7 +531,7 @@ import {
 } from "./presets.ts";
 import { readPublishedTeam, writePublishedTeam } from "./published-teams.ts";
 import { OrgLibrary } from "./org-library.ts";
-import { createTeamBackup, importTeamBackup } from "./team-backup.ts";
+import { createTeamBackup, importTeamBackup, teamStoreCall } from "./jac-team-backup.ts";
 import { MAX_TEAM_BACKUP_BYTES } from "../shared/team-backup.ts";
 import { shouldMountLocalComputer } from "./local-routing.ts";
 import { autoLocalVmAttachable, type ContainerComputerStatus } from "./container-computer.ts";
@@ -554,7 +554,7 @@ import { createWorkspaceAccess, describeEdition, editionStatus, hostedWorkspaceC
 import { environmentDescriptor, loadEnvironmentId, serverVersion } from "./environment.ts";
 import { WorkspaceBackupMaintenance } from "./workspace-backup-maintenance.ts";
 import { createWorkspaceBackupRoutes, isWorkspaceBackupSessionControl } from "./workspace-backup-http.ts";
-import { applyPendingWorkspaceRestore, readLastWorkspaceRestore, type WorkspaceRestoreResult } from "./workspace-backup.ts";
+import { applyPendingWorkspaceRestore, readLastWorkspaceRestore, workspaceRestoreWorkPending, type WorkspaceRestoreResult } from "./jac-workspace-backup.ts";
 import { createCustomDomainVerifier, customDomainIpv4, normalizeCustomDomain } from "./custom-domain.ts";
 import { allowedScopes, createEmailSignIn, parseAllowList } from "./account-signin.ts";
 import { ProviderAuthSessions } from "./provider-auth-sessions.ts";
@@ -677,15 +677,27 @@ function releaseDataDirLeaseAtExit(): void {
 process.once("exit", releaseDataDirLeaseAtExit);
 // Restore before constructing any long-lived config, Store, session or provider
 // objects. Replacing files underneath a live Store would overwrite restored data.
-let workspaceRestore: WorkspaceRestoreResult = { restored: false };
+// The swap runs in the Jac harness (jac/harness/workspace_backup.jac): only
+// when there is restore work does boot wait for it here; otherwise the
+// last-restore receipt is read into this same object once the harness is up
+// (after startJacRoutines, below), since routes hold a reference to it.
+const workspaceRestore: WorkspaceRestoreResult = { restored: false };
 /** A restore applied at this very start (not the last one on record). */
 let restoredAtStart: string | undefined;
+let workspaceRestoreReceiptDeferred = false;
 if (existsSync(join(DATA_DIR, ".backups"))) {
-  workspaceRestore = applyPendingWorkspaceRestore(DATA_DIR);
-  if (workspaceRestore.restored) restoredAtStart = workspaceRestore.id;
-  if (!workspaceRestore.restored && !workspaceRestore.rolledBack) {
-    workspaceRestore = readLastWorkspaceRestore(DATA_DIR) ?? workspaceRestore;
+  if (workspaceRestoreWorkPending(DATA_DIR)) {
+    try {
+      Object.assign(workspaceRestore, await applyPendingWorkspaceRestore(DATA_DIR));
+    } catch (error) {
+      // As before, a failed restore stops boot — unless the harness itself
+      // is missing, in which case the request stays pending for next start.
+      if ((error as { status?: number }).status !== 503) throw error;
+      console.error(`[workspace-backup] restore left pending: ${(error as Error).message}`);
+    }
+    if (workspaceRestore.restored) restoredAtStart = workspaceRestore.id;
   }
+  workspaceRestoreReceiptDeferred = !workspaceRestore.restored && !workspaceRestore.rolledBack;
 }
 const workspaceMaintenance = new WorkspaceBackupMaintenance();
 // Only after ensureDirs(): it performs the one-time rename of the legacy data
@@ -11365,6 +11377,10 @@ const routineBridgeOps: Record<string, (payload: BridgePayload) => unknown> = {
     bridgeString(field(payload, "instanceId", "instance_id")),
     payload.event as RuntimeEvent,
   ),
+  // Team backup import (jac/harness/team_backup.jac) orchestrates in Jac
+  // and performs every Store mutation through this one op: {call, args},
+  // one synchronous Store call each (server/jac-team-backup.ts).
+  team_store: (payload) => teamStoreCall(store, payload),
   has_pending_delegations: (payload) => {
     // Jac sends the requester's own thread as `thread_id`; a standing
     // external runtime sends excludeThreadId. Both mean "not mine".
@@ -20231,7 +20247,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       if ((body.format === "backup" ? store.bots.length : memberIds.length) === 0) return json(res, 400, { error: "Create a bot before exporting your team" });
       try {
         if (body.format === "backup") {
-          return json(res, 200, createTeamBackup(store, await routines.listRoutines(), name));
+          return json(res, 200, await createTeamBackup(store, name));
         }
         if (body.format === "package") {
           const selectedBots = store.bots.filter((bot) => !bot.hidden);
@@ -20425,7 +20441,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       if (body?.format === "openmaus.backup") {
         if (importMode !== "add") return json(res, 400, { error: "Import backups alongside your existing bots; project mode is only for templates" });
         try {
-          const imported = await importTeamBackup(store, routines, body, await defaultSelection(), { visibility: importVisibility });
+          const imported = await importTeamBackup(store, body, await defaultSelection(), { visibility: importVisibility });
           // A restore writes its transcripts without store events, after the
           // store's own frames announced each bot and room, so these frames
           // are what carries the restored pages to other clients.
@@ -25749,6 +25765,10 @@ server.listen(PORT, "127.0.0.1", async () => {
   // reading of the env broker before turns ask whether apps are configured.
   if (jacUrl) await composio.start().catch((error) => console.error(`connected apps: state load failed: ${error instanceof Error ? error.message : String(error)}`));
   if (jacUrl) await mcpOAuth.refresh().catch((error) => console.error(`mcp sign-in: mirror load failed: ${error instanceof Error ? error.message : String(error)}`));
+  if (jacUrl && workspaceRestoreReceiptDeferred) {
+    try { Object.assign(workspaceRestore, await readLastWorkspaceRestore(DATA_DIR) ?? {}); }
+    catch (error) { console.error(`[workspace-backup] restore receipt unreadable: ${error instanceof Error ? error.message : String(error)}`); }
+  }
   // The library reads routine state through the synchronous mirror, so it
   // initializes whether or not the harness answered — an empty mirror is
   // its cold-start truth either way.

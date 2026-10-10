@@ -54,7 +54,7 @@ unique sections, checking that existing bots, section Chiefs, rooms and the
 original conversation remain unchanged after each import.
 Keep that JSON output and the printed persistent server log as evidence.
 
-`server/team-backup.test.ts` additionally covers all-task/branch restoration,
+`jac/harness/team_backup.test.jac` additionally covers all-task/branch restoration,
 multi-section Chiefs, room-goal routines, repeat imports, restart persistence,
 malformed reference graphs, permission injection and rollback on failure.
 The scripted fixture does not by itself prove the native file picker or

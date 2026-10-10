@@ -6,6 +6,7 @@ import { closeSync, existsSync, mkdirSync, openSync, readFileSync, writeFileSync
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { launchVerificationServer, runControlOmb, type VerificationServer } from "./control-omb.ts";
+import { operatorJacEnv } from "../server/jac-binary.ts";
 import { waitForExit } from "../server/testing/cleanup.ts";
 import { escapeAttribute } from "../src/lib/composer-attachments.ts";
 
@@ -30,7 +31,10 @@ async function restartFixture(fixture: VerificationServer): Promise<ChildProcess
   Object.assign(env, {
     HOME: home, USERPROFILE: home, APPDATA: join(home, "AppData", "Roaming"),
     LOCALAPPDATA: join(home, "AppData", "Local"), XDG_CONFIG_HOME: join(home, ".config"),
-    XDG_CACHE_HOME: join(home, ".cache"), XDG_DATA_HOME: join(home, ".local", "share"),
+    XDG_DATA_HOME: join(home, ".local", "share"),
+    // The Jac harness applies the restore at boot: the operator's pinned
+    // binary and warm runtime cache, as control-omb.ts forwards them.
+    ...operatorJacEnv(process.env),
     TEMP: temp, TMP: temp, TMPDIR: temp, HERMES_HOME: join(home, ".hermes"),
     OMB_DATA_DIR: dataDir, OMB_PORT: new URL(fixture.info.url).port,
     OMB_WEBHOOK_PORT: String(Number(new URL(fixture.info.url).port) + 1),
@@ -43,7 +47,8 @@ async function restartFixture(fixture: VerificationServer): Promise<ChildProcess
   });
   closeSync(log);
   try {
-    const deadline = Date.now() + 30_000;
+    // A pending restore waits for the Jac harness before node listens.
+    const deadline = Date.now() + 240_000;
     for (;;) {
       if (child.exitCode !== null || child.signalCode !== null) throw new Error(`Restored fixture exited; see ${fixture.info.logPath}`);
       try {

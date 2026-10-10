@@ -32,7 +32,7 @@ import {
   previousCloud, previousCloudArchiveBytes, removeMoveFiles, stagePreviousCloud, tidyCloudMoveStorage, totalVolumeBytes, uploadStatus, validUploadDeclaration,
   workspaceContents, workspaceMoveSize, writeUploadPart, type PreviousCloud,
 } from "./cloud-move.ts";
-import { commitPendingWorkspaceRestore, createWorkspaceBackup, stageWorkspaceBackup } from "./workspace-backup.ts";
+import { commitPendingWorkspaceRestore, createWorkspaceBackup, stageWorkspaceBackup } from "./jac-workspace-backup.ts";
 import type { RequestAuth } from "./request-auth.ts";
 
 export const CLOUD_MOVE_PREFIX = "/api/cloud-move";
@@ -143,7 +143,7 @@ export function createCloudMoveRoutes(options: {
         check(req, auth);
         const previous = await prepareNextPreviousCloud(options.dataDir, id, (password) =>
           createWorkspaceBackup(options.dataDir, { password, appVersion: options.appVersion }));
-        return { committed: commitPendingWorkspaceRestore(options.dataDir, id), previous };
+        return { committed: await commitPendingWorkspaceRestore(options.dataDir, id), previous };
       });
     } catch (error) {
       discardNextPreviousCloud(options.dataDir);

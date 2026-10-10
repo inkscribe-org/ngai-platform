@@ -9,7 +9,7 @@ import { createServer, type IncomingMessage, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { afterEach, beforeEach, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "vitest";
 import {
   beginUpload, totalVolumeBytes, CLOUD_MOVE_MAX_BYTES, CLOUD_MOVE_SPACE_MARGIN, completedUpload, isEmptyWorkspace, moveSpaceNeeded, noteMoveRestore,
   prepareNextPreviousCloud, previousCloud, stagePreviousCloud, tidyCloudMoveStorage, uploadStatus, validUploadDeclaration, workspaceContents,
@@ -20,7 +20,12 @@ import { readBody } from "./harness/http.ts";
 import { resolveRequestAuth, type RequestAuth } from "./request-auth.ts";
 import { SessionRegistry } from "./sessions.ts";
 import { removeTempDir } from "./testing/cleanup.ts";
-import { createWorkspaceBackupSnapshot } from "./workspace-backup.ts";
+// The archive is made by the Jac harness (jac/harness/workspace_backup.jac).
+import { createWorkspaceBackup as createWorkspaceBackupSnapshot } from "./jac-workspace-backup.ts";
+import { startTestJacHarness, stopJacHarness } from "./testing/jac-harness.ts";
+
+beforeAll(async () => { await startTestJacHarness(); }, 300_000);
+afterAll(() => stopJacHarness());
 
 let dataDir: string, desktop: string;
 beforeEach(() => { dataDir = mkdtempSync(join(tmpdir(), "omb-cloud-move-")); desktop = mkdtempSync(join(tmpdir(), "omb-cloud-move-desktop-")); });

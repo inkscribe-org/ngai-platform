@@ -66,3 +66,25 @@ export function redownloadedOrgLibraryPath(path: string): boolean {
 export function ephemeralWorkspaceTokenPath(path: string): boolean {
   return /^(?:hook-tokens(?:\/|$)|sessions\.json\.open$)/.test(path);
 }
+
+/** Top-level names a snapshot never carries. The archive itself is made by
+ * jac/harness/workspace_backup.jac (EXCLUDED there is authoritative); this
+ * copy only sizes a move for cloud-move.ts. Keep the two lists identical. */
+export const WORKSPACE_BACKUP_EXCLUDED_NAMES: ReadonlySet<string> = new Set([
+  ".backups", "tools", "cache", ".cache", "tmp", ".tmp", "dist-native", "tunnel-runtime",
+  ".openmausbot-server-child", "environment-id", "sessions.json", "tunnel-account.json",
+  "team-computers.json",
+  "openmausbot-server.lease", "box-create-requests.lock", "messages.db-wal", "messages.db-shm",
+  "decider-log",
+  "cloud-owner.json",
+]);
+function excludedTopLevel(name: string): boolean {
+  return WORKSPACE_BACKUP_EXCLUDED_NAMES.has(name) || excludedWorkspaceAuthPath(name) || name.startsWith("openmausbot-server.lease.") || name.startsWith("box-create-requests.lock.") || /^perm-[A-Za-z0-9_-]+\.sock$/.test(name);
+}
+
+/** Whether a snapshot leaves out this workspace-relative path, by the same
+ * rules as the export walk (cloud-move.ts sizes a move with it). Symbolic
+ * links are the caller's to skip. */
+export function omittedFromWorkspaceBackup(path: string): boolean {
+  return excludedTopLevel(path.split("/")[0]) || excludedWorkspaceAuthPath(path) || ephemeralWorkspaceTokenPath(path) || redownloadedOrgLibraryPath(path);
+}

@@ -3,7 +3,7 @@
 // external clients. It deliberately owns no second API client or wait loop.
 import { spawn, type ChildProcess } from "node:child_process";
 import { closeSync, mkdirSync, mkdtempSync, openSync, writeFileSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs, type ParseArgsOptionsConfig } from "node:util";
@@ -12,7 +12,7 @@ import { handleToolCall, request, validateBaseUrl } from "./mcp-server.ts";
 import { launchUi, runControlOmbUi } from "./testing/control-omb-ui.ts";
 import { removeTempDir, waitForExit } from "../server/testing/cleanup.ts";
 import { freePortBlock } from "../server/testing/ports.ts";
-import { resolveJacBinary } from "../server/jac-binary.ts";
+import { operatorJacEnv, resolveJacBinary } from "../server/jac-binary.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 /** Deterministic name for the seeded starter bot of a verification fixture,
@@ -351,7 +351,7 @@ export function verificationServerEnvironment(parentEnv: NodeJS.ProcessEnv, data
     // The jac runtime cache is content-addressed by compiler identity
     // (~830MB per extraction). Reuse the operator's warm cache instead of
     // re-extracting per fixture; data itself stays in dataDir.
-    XDG_CACHE_HOME: parentEnv.XDG_CACHE_HOME || join(homedir(), ".cache"),
+    XDG_CACHE_HOME: operatorJacEnv(parentEnv).XDG_CACHE_HOME,
     XDG_DATA_HOME: join(dataDir, ".local", "share"),
     TEMP: fixtureTemp,
     TMP: fixtureTemp,
@@ -407,7 +407,8 @@ export function verificationServerEnvironment(parentEnv: NodeJS.ProcessEnv, data
   // resolved against the parent environment because the child's PATH is
   // sealed (a `jac` in ~/.local/bin or a jacup version would never be
   // found otherwise). OMB_JAC=0 deliberately leaves the seam off.
-  const jacBin = resolveJacBinary(parentEnv);
+  // Under vitest HOME is a throwaway directory: fall back to the account's.
+  const jacBin = resolveJacBinary(parentEnv) ?? operatorJacEnv(parentEnv).OMB_JAC_BIN;
   if (jacBin) childEnv.OMB_JAC_BIN = jacBin;
   // Driver-kind gate for the Jac seam (comma list or "all"); like OMB_JAC_BIN
   // it is resolved from the parent because the child env is sealed.

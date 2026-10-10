@@ -451,3 +451,40 @@ glob mcp_oauth_dispose: any = _mcp_oauth_dispose;
 import from driver_codex {
     _create as _codex_driver_create,
 }
+
+# --- team_backup module HTTP surface ---
+# Portable team backups (team_backup.jac): export from a node-gathered
+# Store snapshot, import orchestrated here with Store writes via the
+# `team_store` bridge op. Same rebind rule as routines/webhooks.
+import from team_backup {
+    team_backup_create as _team_backup_team_backup_create,
+    team_backup_import as _team_backup_team_backup_import,
+    team_backup_parse as _team_backup_team_backup_parse,
+}
+glob team_backup_create: any = _team_backup_team_backup_create;
+glob team_backup_import: any = _team_backup_team_backup_import;
+glob team_backup_parse: any = _team_backup_team_backup_parse;
+
+# --- workspace_backup module HTTP surface ---
+# Encrypted full-workspace backups (workspace_backup.jac): snapshot, stage,
+# commit, boot-time apply/rollback, receipts. Node passes a per-op loopback
+# `policy_url` for its config schema (server/jac-workspace-backup.ts).
+# Same rebind rule as routines/webhooks.
+import from workspace_backup {
+    workspace_backup_create as _workspace_backup_create,
+    workspace_backup_stage as _workspace_backup_stage,
+    workspace_backup_read_staged as _workspace_backup_read_staged,
+    workspace_backup_commit as _workspace_backup_commit,
+    workspace_backup_read_pending as _workspace_backup_read_pending,
+    workspace_backup_apply_pending as _workspace_backup_apply_pending,
+    workspace_backup_read_last as _workspace_backup_read_last,
+    workspace_backup_remove_job as _workspace_backup_remove_job,
+}
+glob workspace_backup_create: any = _workspace_backup_create;
+glob workspace_backup_stage: any = _workspace_backup_stage;
+glob workspace_backup_read_staged: any = _workspace_backup_read_staged;
+glob workspace_backup_commit: any = _workspace_backup_commit;
+glob workspace_backup_read_pending: any = _workspace_backup_read_pending;
+glob workspace_backup_apply_pending: any = _workspace_backup_apply_pending;
+glob workspace_backup_read_last: any = _workspace_backup_read_last;
+glob workspace_backup_remove_job: any = _workspace_backup_remove_job;

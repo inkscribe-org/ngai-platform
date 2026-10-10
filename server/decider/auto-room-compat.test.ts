@@ -3,19 +3,16 @@
 // data without it keeps loading unchanged, and a kind this build does not
 // know degrades to today's default (the first member as lead) instead of
 // refusing the file.
-import { readFileSync, rmSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { beforeEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { parsePackageDocument } from "../../shared/package-format.ts";
 import { parseTeamBackup } from "../../shared/team-backup.ts";
-import { DATA_DIR } from "../config.ts";
 import { selectGroupGoalCoordinator } from "../group-goal-run.ts";
 import { createTeamPackageExport } from "../package-export.ts";
-import { RoutineStub } from "../testing/routine-stub.ts";
-import { Store, normalizeGroupDefaultResponder, roomResponders, type BotRecord, type GroupRecord } from "../store.ts";
-import { createTeamBackup, importTeamBackup } from "../team-backup.ts";
+import { normalizeGroupDefaultResponder, roomResponders, type BotRecord, type GroupRecord } from "../store.ts";
 import { parseTeamManifest } from "../team-manifest.ts";
 
 const FIXTURES = join(import.meta.dirname, "..", "..", "shared", "package-fixtures");
@@ -96,33 +93,27 @@ describe("packages", () => {
   });
 });
 
+// The export/import round trip of an Auto room is a Jac invariant now
+// (jac/harness/team_backup.test.jac); the shared schema the client also
+// parses with is checked here.
 describe("team backups", () => {
-  beforeEach(() => rmSync(DATA_DIR, { recursive: true, force: true }));
-
-  const setup = (defaultResponder: GroupRecord["defaultResponder"]) => {
-    const store = new Store(() => ({ instanceId: "fixture", model: "fixture-model" }));
-    const routines = new RoutineStub();
-    const ada = store.createBot({ name: "Ada" }, { seedMessages: false });
-    const bea = store.createBot({ name: "Bea" }, { seedMessages: false });
-    const group = store.createGroup("Room", [ada.id, bea.id], false, undefined, { bulletin: "", defaultResponder, completed: true });
-    return { store, routines, ada, bea, group };
-  };
-
-  it("round-trips an Auto room with its fallback mapped to the imported bot", async () => {
-    const { store, routines, bea } = setup({ kind: "auto", fallbackBotId: "" });
-    store.patchGroup(store.groups[0]!.id, { defaultResponder: { kind: "auto", fallbackBotId: bea.id } });
-    const backup = JSON.parse(JSON.stringify(await createTeamBackup(store, routines.listRoutines(), "Team")));
-    expect(parseTeamBackup(backup).groups[0]!.defaultResponder).toEqual({ kind: "auto", fallbackBotId: bea.id });
-    const result = await importTeamBackup(store, routines, backup, { instanceId: "fixture", model: "fixture-model" });
-    const importedBea = result.bots.find((bot) => bot.name.startsWith("Bea"))!;
-    expect(result.groups[0]!.defaultResponder).toEqual({ kind: "auto", fallbackBotId: importedBea.id });
+  const task = { key: "t", title: "Room", createdAt: 1, activeLeafId: null, messages: [] };
+  const backup = (defaultResponder: unknown) => ({
+    format: "openmaus.backup", version: 1, name: "Team", exportedAt: 1, warnings: [],
+    bots: ["ada", "bea"].map((key) => ({
+      key, name: key, activeTask: "t", tasks: [task], title: "", description: "", color: "green",
+      chiefOfStaff: false, hidden: false, playbooks: [],
+    })),
+    groups: [{ key: "room", name: "Room", activeTask: "t", tasks: [task], memberIds: ["ada", "bea"], dm: false, bulletin: "", defaultResponder }],
+    routines: [],
   });
 
-  it("restores an unknown kind as the first member leading", async () => {
-    const { store, routines, ada } = setup({ kind: "everyone" });
-    const backup = JSON.parse(JSON.stringify(await createTeamBackup(store, routines.listRoutines(), "Team")));
-    backup.groups[0].defaultResponder = { kind: "round-robin" };
-    expect(parseTeamBackup(backup).groups[0]!.defaultResponder).toEqual({ kind: "member", botId: ada.id });
+  it("keeps an Auto room's fallback", () => {
+    expect(parseTeamBackup(backup({ kind: "auto", fallbackBotId: "bea" })).groups[0]!.defaultResponder).toEqual({ kind: "auto", fallbackBotId: "bea" });
+  });
+
+  it("restores an unknown kind as the first member leading", () => {
+    expect(parseTeamBackup(backup({ kind: "round-robin" })).groups[0]!.defaultResponder).toEqual({ kind: "member", botId: "ada" });
   });
 });
 

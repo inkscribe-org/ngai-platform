@@ -1,5 +1,6 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { ephemeralWorkspaceTokenPath, excludedWorkspaceAuthPath, portableWorkspaceConfig, redownloadedOrgLibraryPath, restoredWorkspaceConfig } from "./workspace-backup-policy.ts";
+import { ephemeralWorkspaceTokenPath, excludedWorkspaceAuthPath, omittedFromWorkspaceBackup, portableWorkspaceConfig, redownloadedOrgLibraryPath, restoredWorkspaceConfig, WORKSPACE_BACKUP_EXCLUDED_NAMES } from "./workspace-backup-policy.ts";
 
 describe("workspace backup data boundary", () => {
   it("exports ordinary settings only and retains destination connection sections unchanged", () => {
@@ -69,5 +70,15 @@ describe("workspace backup data boundary", () => {
 
   it.each(["attachments/key.txt", "workspaces/bot/notes.md", "workspaces/bot/external-runtimes.json", "vm-home/project/config.json", "config.json", "webhooks.json"])("does not redact arbitrary user file %s", (path) => {
     expect(excludedWorkspaceAuthPath(path)).toBe(false);
+  });
+
+  // The archive is made by jac/harness/workspace_backup.jac; node keeps a
+  // copy of its top-level exclusions only to size a cloud move.
+  it("keeps the move-size exclusions identical to the Jac snapshot's", () => {
+    const source = readFileSync(new URL("../jac/harness/workspace_backup.jac", import.meta.url), "utf8");
+    const block = /glob EXCLUDED: list\[str\] = \[([\s\S]*?)\];/.exec(source)![1];
+    expect(new Set([...block.matchAll(/"([^"]+)"/g)].map((match) => match[1]))).toEqual(new Set(WORKSPACE_BACKUP_EXCLUDED_NAMES));
+    for (const path of ["tools/x", "providers/a", "hook-tokens/t.token", "org-library/catalog.json", "perm-ab.sock", "openmausbot-server.lease.1"]) expect(omittedFromWorkspaceBackup(path)).toBe(true);
+    for (const path of ["attachments/a", "workspaces/bot/tools/x", "org-library/state.json"]) expect(omittedFromWorkspaceBackup(path)).toBe(false);
   });
 });

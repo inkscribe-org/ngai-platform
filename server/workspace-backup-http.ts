@@ -6,12 +6,14 @@ import { Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { z } from "zod";
 import { WORKSPACE_BACKUP_CLIENT_KEYS } from "../shared/workspace-backup-client.ts";
+// Transport only: the archive work is the Jac harness's
+// (jac/harness/workspace_backup.jac via server/jac-workspace-backup.ts).
 import {
   createWorkspaceBackup, stageWorkspaceBackup, commitPendingWorkspaceRestore,
   MAX_WORKSPACE_BACKUP_UPLOAD_BYTES,
   removeWorkspaceBackupJob,
   type WorkspaceBackupSummary,
-} from "./workspace-backup.ts";
+} from "./jac-workspace-backup.ts";
 import type { RequestAuth } from "./request-auth.ts";
 
 const PREFIX = "/api/workspace-backup";
@@ -55,7 +57,8 @@ export function createWorkspaceBackupRoutes(options: {
   };
   function remove(id: string, artifact: Artifact) {
     if (artifact.path) { try { unlinkSync(artifact.path); } catch {} }
-    if (artifact.kind !== "upload") { try { removeWorkspaceBackupJob(options.dataDir, id); } catch { /* Recovery jobs are deliberately protected. */ } }
+    // Recovery jobs are deliberately protected; the harness refuses those.
+    if (artifact.kind !== "upload") void removeWorkspaceBackupJob(options.dataDir, id).catch(() => {});
     artifacts.delete(id);
   }
   // A crashed process has no in-memory transfer map. Reclaim only its old,
@@ -66,7 +69,8 @@ export function createWorkspaceBackupRoutes(options: {
     for (const entry of readdirSync(root, { withFileTypes: true })) {
       if (!entry.isDirectory() || !/^[a-f0-9-]{36}$/.test(entry.name)) continue;
       if (statSync(join(root, entry.name)).mtimeMs + EXPIRES_MS > Date.now()) continue;
-      try { removeWorkspaceBackupJob(options.dataDir, entry.name); } catch { /* May belong to a recoverable restore. */ }
+      // May belong to a recoverable restore: the harness refuses those.
+      void removeWorkspaceBackupJob(options.dataDir, entry.name).catch(() => {});
     }
     const uploads = join(root, "uploads");
     if (!existsSync(uploads) || lstatSync(uploads).isSymbolicLink()) return;
@@ -132,7 +136,7 @@ export function createWorkspaceBackupRoutes(options: {
           if (artifacts.size >= 4) throw failure("There are already four backup files in progress. Restart or wait an hour before creating another.", 409);
           return createWorkspaceBackup(options.dataDir, { password: body.password, clientState, appVersion: options.appVersion });
         }));
-        try { check(req, auth); } catch (error) { removeWorkspaceBackupJob(options.dataDir, result.id); throw error; }
+        try { check(req, auth); } catch (error) { await removeWorkspaceBackupJob(options.dataDir, result.id); throw error; }
         artifacts.set(result.id, { owner: owner(auth), kind: "download", path: result.path, summary: result.summary, expires: Date.now() + EXPIRES_MS });
         json(res, 200, { id: result.id, filename: `OpenMausBot-${result.summary.createdAt.slice(0, 10)}.ombbackup`, bytes: statSync(result.path).size, summary: result.summary });
         return true;
@@ -183,7 +187,7 @@ export function createWorkspaceBackupRoutes(options: {
         const body = z.object({ id: z.string().uuid(), password: passwordSchema }).parse(await options.readBody(req));
         const artifact = get(body.id, auth, "upload");
         const result = await operate(() => stageWorkspaceBackup(options.dataDir, artifact.path!, { password: body.password, currentAppVersion: options.appVersion }));
-        try { check(req, auth); } catch (error) { removeWorkspaceBackupJob(options.dataDir, result.id); throw error; }
+        try { check(req, auth); } catch (error) { await removeWorkspaceBackupJob(options.dataDir, result.id); throw error; }
         try { unlinkSync(artifact.path!); } catch {}
         artifacts.delete(body.id);
         artifacts.set(result.id, { owner: owner(auth), kind: "staged", summary: result.summary, expires: Date.now() + EXPIRES_MS });

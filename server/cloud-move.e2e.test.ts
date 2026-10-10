@@ -20,10 +20,14 @@ import { createCloudMove, mintOwnerCode } from "../electron/cloud-move.mjs";
 import { cloudPairingSignature } from "./cloud-home.ts";
 import { RESTART_EXIT_CODE } from "./restart.ts";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
-import { stageWorkspaceBackup } from "./workspace-backup.ts";
+// Archives are made and staged by the Jac harness; the fixture servers and
+// this process both run the operator's pinned jac with its runtime cache.
+import { stageWorkspaceBackup } from "./jac-workspace-backup.ts";
+import { stopJacHarness, useOperatorJac } from "./testing/jac-harness.ts";
 import { freePortBlock } from "./testing/ports.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
+const JAC_BIN = useOperatorJac();
 const HOST = "omb-t-0123456789ab.fly.dev";
 const ORIGIN = `https://${HOST}`;
 // A self-hosted server the person added in the desktop app (`openmausbot serve`).
@@ -109,6 +113,7 @@ await import(${JSON.stringify(pathToFileURL(join(SERVER_DIR, "testing", "fake-cl
     ...(process.env.PATHEXT ? { PATHEXT: process.env.PATHEXT } : {}),
     ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
     HOME: home, USERPROFILE: home, OMB_DATA_DIR: dataDir, OMB_PORT: String(port), OMB_WEBHOOK_PORT: String(port + 1),
+    ...(JAC_BIN ? { OMB_JAC_BIN: JAC_BIN } : {}), ...(process.env.XDG_CACHE_HOME ? { XDG_CACHE_HOME: process.env.XDG_CACHE_HOME } : {}),
     ...(name === "cloud" ? {
       OMB_CLOUD_ROLE: "home", OMB_CLOUD_MACHINE_ID: "3f9c2a4e-8b1d-4c6e-9a7f-2d5e8c1b0a93", OMB_CLOUD_ADMIN_URL: "https://cloud.example.test",
       OMB_CLOUD_BOOTSTRAP_SECRET: bootstrapSecret, OMB_PUBLIC_URL: ORIGIN,
@@ -267,6 +272,7 @@ beforeAll(async () => {
 }, 90_000);
 
 afterAll(async () => {
+  stopJacHarness();
   for (const fixture of [source, cloud, server]) {
     if (!fixture) continue;
     fixture.closing = true;

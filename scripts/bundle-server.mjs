@@ -46,7 +46,6 @@ const ENTRY_POINTS = [
   // package, the container image and checkouts; pair-cli.ts stays as an alias
   "openmausbot.ts",
   "pair-cli.ts",
-  "workspace-backup.worker.ts",
   // the OMB Cloud Pro home image's entry point (Dockerfile, cloud-home): it
   // spawns index.js beside it and the Caddy edge
   "cloud-home-start.ts",

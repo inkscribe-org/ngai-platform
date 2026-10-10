@@ -22,7 +22,7 @@ import { writeFileAtomic } from "./atomic.ts";
 import {
   MAX_WORKSPACE_BACKUP_FILES, MAX_WORKSPACE_BACKUP_UPLOAD_BYTES, omittedFromWorkspaceBackup, removeWorkspaceBackupJob,
   stageWorkspaceBackup, type WorkspaceBackupSummary,
-} from "./workspace-backup.ts";
+} from "./jac-workspace-backup.ts";
 
 /** The part size the desktop sends; a part may be at most CLOUD_MOVE_MAX_PART_BYTES. */
 export const CLOUD_MOVE_PART_BYTES = 16 * 1024 ** 2;
@@ -300,7 +300,7 @@ export async function prepareNextPreviousCloud(dataDir: string, restoreId: strin
     rmSync(next, { recursive: true, force: true });
     throw error;
   } finally {
-    try { removeWorkspaceBackupJob(dataDir, created.id); } catch { /* The export job expires with the others. */ }
+    try { await removeWorkspaceBackupJob(dataDir, created.id); } catch { /* The export job expires with the others. */ }
   }
 }
 

@@ -13,8 +13,8 @@ import { SessionRegistry } from "./sessions.ts";
 import { WorkspaceBackupMaintenance } from "./workspace-backup-maintenance.ts";
 
 const archive = vi.hoisted(() => ({ create: vi.fn(), stage: vi.fn(), commit: vi.fn(), remove: vi.fn() }));
-vi.mock("./workspace-backup.ts", async (original) => ({
-  ...await original<typeof import("./workspace-backup.ts")>(),
+vi.mock("./jac-workspace-backup.ts", async (original) => ({
+  ...await original<typeof import("./jac-workspace-backup.ts")>(),
   createWorkspaceBackup: archive.create, stageWorkspaceBackup: archive.stage,
   commitPendingWorkspaceRestore: archive.commit, removeWorkspaceBackupJob: archive.remove,
 }));
@@ -46,8 +46,8 @@ beforeEach(async () => {
   admin = sessions.issue({ label: "Fixture admin", scopes: ["admin", "client"] });
   archive.create.mockImplementation(async () => fakeArchive());
   archive.stage.mockImplementation(async () => fakeArchive());
-  archive.commit.mockImplementation((_dataDir: string, id: string) => ({ id, restartRequired: true }));
-  archive.remove.mockImplementation((_dataDir: string, id: string) => rmSync(join(dataDir, ".backups", id), { recursive: true, force: true }));
+  archive.commit.mockImplementation(async (_dataDir: string, id: string) => ({ id, restartRequired: true }));
+  archive.remove.mockImplementation(async (_dataDir: string, id: string) => rmSync(join(dataDir, ".backups", id), { recursive: true, force: true }));
   const authenticate = (req: IncomingMessage) => resolveRequestAuth(req, { sessions, cookieName: "fixture", streamPath: "/api/events", url: new URL(req.url!, url) });
   const routes = createWorkspaceBackupRoutes({
     dataDir, appVersion: "0.1.71", restored: {},

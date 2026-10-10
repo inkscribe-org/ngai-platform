@@ -13,7 +13,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { mkdirSync } from "node:fs";
-import { createServer } from "node:http";
+import { createServer, request as httpRequest } from "node:http";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -284,6 +284,43 @@ async function jacOpRaw(name: string, args: Record<string, unknown>, timeoutMs =
   return result;
 }
 
+/** Long operations (workspace backup snapshot/stage/restore, team backup
+ * import) can run for minutes: fetch's undici dispatcher would abort them at
+ * its 300 s headers timeout, so they go over node:http with no socket
+ * timeout. Same envelope and failure mapping as jacOpRaw. */
+async function jacLongOpRaw(name: string, args: Record<string, unknown>): Promise<unknown> {
+  const url = jacUrl ?? (await ensureJacHarness());
+  if (!url) throw Object.assign(new Error("routines unavailable"), { status: 503 });
+  const payload = Buffer.from(JSON.stringify({ omb_token: jacBridgeToken(), ...args }));
+  const { status, text } = await new Promise<{ status: number; text: string }>((resolve, reject) => {
+    const req = httpRequest(`${url}/function/${name}`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "content-length": payload.length },
+    }, (res) => {
+      const chunks: Buffer[] = [];
+      res.on("data", (chunk: Buffer) => chunks.push(chunk));
+      res.once("end", () => resolve({ status: res.statusCode ?? 0, text: Buffer.concat(chunks).toString("utf8") }));
+      res.once("error", reject);
+    });
+    req.once("error", (error) => reject(Object.assign(
+      new Error(`routines unavailable: ${error.message}`), { status: 503 },
+    )));
+    req.end(payload);
+  });
+  let body: { data?: { result?: unknown }; error?: string };
+  try { body = JSON.parse(text) as typeof body; }
+  catch { throw Object.assign(new Error("jac harness returned a malformed response"), { status: 503 }); }
+  if (status < 200 || status >= 300) {
+    throw Object.assign(new Error(body.error ?? `jac harness answered ${status}`), { status });
+  }
+  const result = body.data?.result;
+  if (result && typeof result === "object" && "ok" in result && result.ok === false) {
+    const failed = result as JacFailureEnvelope;
+    throw Object.assign(new Error(failed.error ?? "operation failed"), { status: failed.status ?? 500 });
+  }
+  return result;
+}
+
 // Every node→Jac call is serialized on one chain: the in-process manager
 // applied each mutation before the next call, and ordering-sensitive pairs
 // (a runtime event vs a manual run, mark-seen vs cancel) keep that
@@ -310,6 +347,17 @@ export function jacOpUnordered<T = unknown>(
   timeoutMs = OP_TIMEOUT_MS,
 ): Promise<T> {
   return jacOpRaw(name, args, timeoutMs) as Promise<T>;
+}
+
+/** A long op (no timeout). `serialize: true` holds the op chain for its
+ * whole duration — the quiesce a workspace snapshot or restore commit
+ * needs; otherwise it runs beside the chain (staging an upload touches only
+ * its own job folder and must not stall routine traffic for minutes). */
+export function jacLongOp<T = unknown>(name: string, args: Record<string, unknown> = {}, options: { serialize?: boolean } = {}): Promise<T> {
+  if (!options.serialize) return jacLongOpRaw(name, args) as Promise<T>;
+  const call = opChain.then(() => jacLongOpRaw(name, args)) as Promise<T>;
+  opChain = call.then(() => undefined, () => undefined);
+  return call;
 }
 
 // ── read mirror ──────────────────────────────────────────────────────────

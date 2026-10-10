@@ -150,7 +150,6 @@
   "server/store.test.ts": 15,
   "server/surface-pins.e2e.test.ts": 34,
   "server/team-backup-workflow.test.ts": 8,
-  "server/team-backup.test.ts": 8,
   "server/team-lifecycle.e2e.test.ts": 8,
   "server/team-package-skills.e2e.test.ts": 4,
   "server/team-setup.e2e.test.ts": 10,
@@ -166,7 +165,5 @@
   "server/verification-fixture.e2e.test.ts": 7,
   "server/voice-notes.e2e.test.ts": 32,
   "server/webhook-restart.e2e.test.ts": 6,
-  "server/workspace-backup-worker.test.ts": 23,
-  "server/workspace-backup-workflow.test.ts": 15,
-  "server/workspace-backup.test.ts": 52
+  "server/workspace-backup-workflow.test.ts": 15
 }

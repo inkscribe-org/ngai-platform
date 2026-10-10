@@ -9,7 +9,7 @@ import { once } from "node:events";
 import { createServer, request, type Server } from "node:http";
 import { connect, type Socket } from "node:net";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { DatabaseSync } from "node:sqlite";
@@ -22,7 +22,7 @@ import {
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { z } from "zod";
 
-import { resolveJacBinary } from "./jac-binary.ts";
+import { operatorJacEnv } from "./jac-binary.ts";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 import { startFakeHttpMcp } from "./testing/fake-http-mcp-server.ts";
 import { startFakeOAuth } from "./testing/fake-oauth-server.ts";
@@ -38,13 +38,16 @@ import {
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(SERVER_DIR, "..");
-const JAC_BIN = resolveJacBinary(process.env);
+// HOME is redirected by setup.ts: resolve the pinned jacup binary and the
+// warm jac runtime cache from the account's real home.
+const OPERATOR_JAC = operatorJacEnv(process.env);
+const JAC_BIN = OPERATOR_JAC.OMB_JAC_BIN;
 // Every spawned server's Jac sidecar: HOME is redirected per server, so
 // pass the pinned binary and the operator's cache (runtime extraction,
 // Postgres socket dir) or each one unpacks the ~830MB runtime afresh.
 const JAC_ENV = {
   ...(JAC_BIN ? { OMB_JAC_BIN: JAC_BIN } : {}),
-  XDG_CACHE_HOME: process.env.XDG_CACHE_HOME || join(homedir(), ".cache"),
+  XDG_CACHE_HOME: OPERATOR_JAC.XDG_CACHE_HOME,
 };
 const FAKE_CLAUDE_CLI = join(SERVER_DIR, "testing", "fake-claude-cli.ts");
 const FAKE_MCP_SERVER = join(SERVER_DIR, "testing", "fake-mcp-server.ts");
