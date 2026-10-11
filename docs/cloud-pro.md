@@ -420,7 +420,7 @@ credential is spent (single use) or expires within two minutes.
 
 The web UI's pages are sent with `Content-Security-Policy: frame-ancestors
 'none'`, `X-Frame-Options: DENY` and `Referrer-Policy: no-referrer`
-(`serveStatic`, `server/index.ts`): no other page can frame them. Nothing
+(`serveStatic`, `server/static-serving.ts`): no other page can frame them. Nothing
 frames the web UI: the desktop app shows it in its own window.
 
 ## Let My Cloud use this Mac
