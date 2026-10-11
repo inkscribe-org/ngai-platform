@@ -157,7 +157,7 @@ export class LocalVmWorld extends BaseWorld {
       case "pollComputerGate": {
         const computer = this.computers.get(step.bot);
         if (computer === undefined) throw new Error("no captured computer for " + step.bot);
-        const readGate = async () => {
+        const readGate = async (): Promise<{ httpStatus: number; [key: string]: unknown }> => {
           const response = await fetch(computer.url, { headers: { authorization: "Bearer " + computer.token } });
           const body = (await response.json().catch(() => ({}))) as Record<string, unknown>;
           return { httpStatus: response.status, ...body };
