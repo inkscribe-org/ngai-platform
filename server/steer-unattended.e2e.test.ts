@@ -23,6 +23,7 @@ import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
+import { jacFixtureEnv } from "./testing/fixture-env.ts";
 import { freePortBlock } from "./testing/ports.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
@@ -51,13 +52,15 @@ const threadMessages = async (threadId: string): Promise<Array<{ kind: string; c
  * duplicated rather than imported because DATA_DIR there is fixed at import
  * time from this process's HOME, not the fixture's. botId is folded into
  * both the deterministic and fallback paths (#1017/#1102) so this must stay
- * in lockstep with permissionSocketPath/brokerSocketCandidates there. */
+ * in lockstep with permissionSocketPath/brokerSocketCandidates there. The
+ * os.tmpdir() fallback anchors to the fixture's TMPDIR — the same
+ * jacFixtureEnv value the child inherits — not this process's. */
 function brokerCandidates(threadId: string, botId: string): string[] {
   const dataDir = join(home, ".openmausbot");
   const prefix = threadId.replace(/[^\w-]/g, "").slice(0, 4);
   const digest = createHash("sha256").update(`${botId}\0${threadId}`).digest("hex").slice(0, 4);
   const scope = createHash("sha256").update(`${dataDir}\0${child.pid}\0${botId}\0${threadId}`).digest("hex").slice(0, 16);
-  return [join(dataDir, `perm-${prefix}${digest}.sock`), join(tmpdir(), `omb-perm-${scope}.sock`)];
+  return [join(dataDir, `perm-${prefix}${digest}.sock`), join(jacFixtureEnv().TMPDIR!, `omb-perm-${scope}.sock`)];
 }
 
 async function connectBroker(threadId: string, botId: string): Promise<Socket> {
@@ -120,9 +123,10 @@ posixOnly("a steered message does not lift the unattended mark on its own", () =
         USERPROFILE: home,
         OMB_PORT: String(port),
         OMB_WEBHOOK_PORT: String(port + 1),
-        // the broker falls back to os.tmpdir() under a deep HOME; the child
-        // has to agree with this process about where that is
-        TMPDIR: tmpdir(),
+        // The broker's os.tmpdir() fallback must match where this process
+        // looks for it: brokerCandidates anchors to the same jacFixtureEnv
+        // TMPDIR the child inherits.
+        ...jacFixtureEnv(),
       },
       stdio: ["ignore", "pipe", "pipe"],
     });

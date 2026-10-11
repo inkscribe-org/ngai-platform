@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { freePortBlock } from "./testing/ports.ts";
+import { jacFixtureEnv } from "./testing/fixture-env.ts";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 
 // Phone exclusivity on the real server (issue #1663): trigger-term matching
@@ -133,8 +134,9 @@ beforeAll(async () => {
     cwd: ROOT, env: {
       PATH: process.env.PATH, HOME: fixtureHome, USERPROFILE: fixtureHome, OMB_DATA_DIR: data,
       APPDATA: join(fixtureHome, "appdata"), LOCALAPPDATA: join(fixtureHome, "localappdata"),
-      TEMP: fixtureHome, TMP: fixtureHome, TMPDIR: fixtureHome,
+      TEMP: fixtureHome, TMP: fixtureHome,
       OMB_PORT: String(port), OMB_WEBHOOK_PORT: String(port + 1), OMB_STATIC_DIR: ui,
+      ...jacFixtureEnv(),
     }, stdio: ["ignore", "pipe", "pipe"],
   });
   child.stdout!.on("data", () => {});

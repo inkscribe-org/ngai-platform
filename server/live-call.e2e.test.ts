@@ -22,6 +22,7 @@ import { CLOUD_HOME_PLACE } from "./system-prompt.ts";
 import type { LiveCallState } from "../shared/wire.ts";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 import { startFakeOpenAiLive, type FakeOpenAiLive } from "./testing/fake-openai-live.ts";
+import { jacFixtureEnv } from "./testing/fixture-env.ts";
 import { freePortBlock } from "./testing/ports.ts";
 import { openSse } from "./testing/sse.ts";
 
@@ -110,6 +111,7 @@ posixOnly("Live call e2e", () => {
         OMB_WEBHOOK_PORT: String(port + 1),
         OMB_OPENAI_LIVE_URL: live.url,
         OMB_OPENAI_LIVE_KEY: LIVE_KEY,
+        ...jacFixtureEnv(),
       },
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -501,6 +503,7 @@ posixOnly("Live call on the person's Cloud", () => {
         OMB_CLOUD_BOOTSTRAP_SECRET: secret, OMB_PUBLIC_URL: `https://${HOST}`,
         // no OMB_OPENAI_LIVE_KEY: no plan includes one
         OMB_OPENAI_LIVE_URL: live.url,
+        ...jacFixtureEnv(),
       },
       stdio: ["ignore", "pipe", "pipe"],
     });

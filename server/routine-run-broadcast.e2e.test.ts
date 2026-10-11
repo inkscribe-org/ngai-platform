@@ -13,7 +13,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { SessionRegistry } from "./sessions.ts";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 
-import { jacHarnessAvailable, resolveJacBinary } from "../scripts/control-omb.ts";
+import { jacHarnessAvailable } from "../scripts/control-omb.ts";
+import { jacFixtureEnv } from "./testing/fixture-env.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const FAKE_CLI = join(SERVER_DIR, "testing", "fake-acp-cli.ts");
@@ -99,10 +100,7 @@ posixOnly("a routine run's task on the event stream", () => {
       env: {
         ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
         HOME: home, OMB_PORT: String(PORT), OMB_WEBHOOK_PORT: String(PORT + 1),
-        // A hand-spawned fixture inherits this environment wholesale; the
-        // Jac harness binary must be named explicitly like control-omb's
-        // verificationServerEnvironment does.
-        OMB_JAC_BIN: resolveJacBinary(process.env) ?? "",
+        ...jacFixtureEnv(),
       },
       stdio: ["ignore", "pipe", "pipe"],
     });

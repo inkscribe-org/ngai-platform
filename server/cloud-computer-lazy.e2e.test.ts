@@ -14,6 +14,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
+import { jacFixtureEnv } from "./testing/fixture-env.ts";
 import { freePortBlock } from "./testing/ports.ts";
 import { openSse, type SseRecorder } from "./testing/sse.ts";
 
@@ -216,12 +217,13 @@ describe("a cloud computer starts only when the bot uses it", () => {
       cwd: ROOT,
       env: {
         PATH: process.env.PATH, ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
-        HOME: home, USERPROFILE: home, OMB_DATA_DIR: data, TEMP: home, TMP: home, TMPDIR: home,
+        HOME: home, USERPROFILE: home, OMB_DATA_DIR: data, TEMP: home, TMP: home,
         OMB_PORT: String(port), OMB_WEBHOOK_PORT: String(port + 1),
         // An own key would go here; nothing may use it.
         OMB_BOX_API: `${relayBase}/own-key-must-not-be-used`,
         OMB_CLOUD_BOAT_URL: `${relayBase}/relay/api/box/v1`,
         OMB_CLOUD_BOAT_TOKEN: INCLUDED,
+        ...jacFixtureEnv(),
       },
       stdio: ["ignore", "pipe", "pipe"],
     });

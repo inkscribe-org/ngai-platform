@@ -14,6 +14,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
+import { jacFixtureEnv } from "./testing/fixture-env.ts";
 import { freePortBlock } from "./testing/ports.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
@@ -92,6 +93,7 @@ beforeAll(async () => {
       OMB_BOX_API: `${stubBase}/boat/api/box/v1`,
       OMB_CLOUD_BOAT_URL: `${stubBase}/relay/api/box/v1`,
       OMB_CLOUD_BOAT_TOKEN: INCLUDED,
+      ...jacFixtureEnv(),
     },
     stdio: ["ignore", "pipe", "pipe"],
   });

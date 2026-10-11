@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 import { launchVerificationServer, runControlOmb, verificationServerEnvironment } from "../scripts/control-omb.ts";
 import { waitForExit } from "./testing/cleanup.ts";
+import { jacFixtureEnv } from "./testing/fixture-env.ts";
 
 it("preserves peer approval expiry through real HTTP responses and durable delegation receipts", async () => {
   const fixture = await launchVerificationServer(process.env);
@@ -47,6 +48,7 @@ it("preserves peer approval expiry through real HTTP responses and durable deleg
     const env = verificationServerEnvironment({ ...process.env, FAKE_CLAUDE_MODE: "slow",
       FAKE_CLAUDE_SLOW_FINISH_GATE: gate }, dataDir, Number(new URL(url).port));
     env.OMB_TEST_PEER_APPROVAL = "1";
+    Object.assign(env, jacFixtureEnv());
     const log = openSync(logPath, "a", 0o600);
     child = spawn(process.execPath, ["--import", new URL("./testing/peer-approval-hooks.mjs", import.meta.url).href,
       fileURLToPath(new URL("./index.ts", import.meta.url))], {

@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
+import { jacFixtureEnv } from "./testing/fixture-env.ts";
 import { freePortBlock } from "./testing/ports.ts";
 
 // A room waits for a busy teammate, but not forever, and a goal survives one
@@ -90,6 +91,7 @@ beforeAll(async () => {
       OMB_STATIC_DIR: staticDir,
       // seconds, not minutes: the point of this file is the cap firing
       OMB_GOAL_WAIT_MAX_MS: "1500",
+      ...jacFixtureEnv(),
     },
     stdio: ["ignore", "pipe", "pipe"],
   });

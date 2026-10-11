@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { expect, it } from "vitest";
 import { launchVerificationServer, runControlOmb, verificationServerEnvironment } from "../scripts/control-omb.ts";
+import { jacFixtureEnv } from "./testing/fixture-env.ts";
 
 async function withFixture(mode: "happy" | "hang", run: (helpers: {
   api(method: string, path: string, body?: unknown, headers?: Record<string, string>): Promise<{ status: number; body: any }>;
@@ -97,7 +98,7 @@ it.each(["direct", "preview", "room", "goal"] as const)("keeps a corrupt persist
     storedBot.toolScope = { allow: "all" };
     writeFileSync(file, JSON.stringify(bots));
     restarted = spawn(process.execPath, ["--experimental-strip-types", fileURLToPath(new URL("./index.ts", import.meta.url))], {
-      env: verificationServerEnvironment(process.env, fixture.info.dataDir, Number(new URL(fixture.info.url).port)),
+      env: { ...verificationServerEnvironment(process.env, fixture.info.dataDir, Number(new URL(fixture.info.url).port)), ...jacFixtureEnv() },
       stdio: ["ignore", log, log],
     });
     await expect.poll(async () => {

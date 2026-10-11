@@ -16,6 +16,7 @@ import { afterAll, beforeAll, expect, it } from "vitest";
 import { spawnWithSecrets } from "./cloud-home-start.ts";
 import { cloudPairingSignature } from "./cloud-home.ts";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
+import { jacFixtureEnv } from "./testing/fixture-env.ts";
 import { freePortBlock } from "./testing/ports.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
@@ -84,6 +85,7 @@ beforeAll(async () => {
     OMB_PUBLIC_URL: `https://${HOST}`, OMB_CLOUD_SECRETS_FD: "3",
     // Provider keys in the server's own environment: never the owner's to spend from a bot.
     ANTHROPIC_API_KEY: "anthropic-server-own", OPENAI_API_KEY: "openai-server-own",
+    ...jacFixtureEnv(),
   }, { OMB_CLOUD_BOOTSTRAP_SECRET: secret });
   const deadline = Date.now() + 20_000;
   for (;;) {

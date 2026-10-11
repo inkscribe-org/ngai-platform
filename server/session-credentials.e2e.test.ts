@@ -12,6 +12,7 @@ import { expect, it } from "vitest";
 
 import { launchVerificationServer, runControlOmb, verificationServerEnvironment } from "../scripts/control-omb.ts";
 import { waitForExit } from "./testing/cleanup.ts";
+import { jacFixtureEnv } from "./testing/fixture-env.ts";
 
 const jsonl = (path: string) => existsSync(path)
   ? readFileSync(path, "utf8").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line)) : [];
@@ -72,6 +73,7 @@ async function fixture(test: (f: any) => Promise<void>, { thisComputer = false }
         ...verificationServerEnvironment({ FAKE_CLAUDE_MODE: "hang", FAKE_CLAUDE_RELEASE: release }, dataDir, Number(new URL(url).port)),
         ...(withBrowser ? { OMB_AGENT_BROWSER_PATH: browser } : {}),
         ...(thisComputer ? { OMB_USER_DATA: userData } : {}),
+        ...jacFixtureEnv(),
       },
       stdio: ["ignore", log, log],
     });

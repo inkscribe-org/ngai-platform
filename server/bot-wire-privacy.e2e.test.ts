@@ -14,6 +14,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { freePortBlock } from "./testing/ports.ts";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
+import { jacFixtureEnv } from "./testing/fixture-env.ts";
 
 // Library store import is root-explicit, so the spawned server’s DATA_DIR never has to match this process.
 import { installLibrarySkill } from "./skill-library.ts";
@@ -54,6 +55,7 @@ describe("bot wire privacy against the real server", () => {
         HOME: home, USERPROFILE: home, OMB_DATA_DIR: data,
         APPDATA: join(home, "appdata"), LOCALAPPDATA: join(home, "localappdata"),
         OMB_PORT: String(port), OMB_WEBHOOK_PORT: String(port + 1),
+        ...jacFixtureEnv(),
       },
       stdio: ["ignore", "pipe", "pipe"],
     });

@@ -12,7 +12,8 @@ import { handleToolCall, request, validateBaseUrl } from "./mcp-server.ts";
 import { launchUi, runControlOmbUi } from "./testing/control-omb-ui.ts";
 import { removeTempDir, waitForExit } from "../server/testing/cleanup.ts";
 import { freePortBlock } from "../server/testing/ports.ts";
-import { operatorJacEnv, resolveJacBinary } from "../server/jac-binary.ts";
+import { resolveJacBinary } from "../server/jac-binary.ts";
+import { jacFixtureEnv } from "../server/testing/fixture-env.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 /** Deterministic name for the seeded starter bot of a verification fixture,
@@ -348,14 +349,13 @@ export function verificationServerEnvironment(parentEnv: NodeJS.ProcessEnv, data
     APPDATA: join(dataDir, "AppData", "Roaming"),
     LOCALAPPDATA: join(dataDir, "AppData", "Local"),
     XDG_CONFIG_HOME: join(dataDir, ".config"),
-    // The jac runtime cache is content-addressed by compiler identity
-    // (~830MB per extraction). Reuse the operator's warm cache instead of
-    // re-extracting per fixture; data itself stays in dataDir.
-    XDG_CACHE_HOME: operatorJacEnv(parentEnv).XDG_CACHE_HOME,
     XDG_DATA_HOME: join(dataDir, ".local", "share"),
     TEMP: fixtureTemp,
     TMP: fixtureTemp,
-    TMPDIR: fixtureTemp,
+    // Jac sidecar entries (pinned binary, operator's warm runtime cache,
+    // shared-Postgres-socket tmpdir, driver gate) come from the one helper
+    // the e2e tests spread too; TMPDIR is the shared jac tmp, not fixtureTemp.
+    ...jacFixtureEnv(parentEnv),
     HERMES_HOME: join(dataDir, ".hermes"),
     OMB_DATA_DIR: dataDir,
     OMB_PORT: String(port),
@@ -403,17 +403,9 @@ export function verificationServerEnvironment(parentEnv: NodeJS.ProcessEnv, data
     childEnv.OMB_TEST_DESKTOP_OWNER_TOKEN = parentEnv.OMB_TEST_DESKTOP_OWNER_TOKEN;
     childEnv.OMB_DESKTOP_PARENT = "1";
   }
-  // The Jac routines harness the server spawns as a sidecar: the binary is
-  // resolved against the parent environment because the child's PATH is
-  // sealed (a `jac` in ~/.local/bin or a jacup version would never be
-  // found otherwise). OMB_JAC=0 deliberately leaves the seam off.
-  // Under vitest HOME is a throwaway directory: fall back to the account's.
-  const jacBin = resolveJacBinary(parentEnv) ?? operatorJacEnv(parentEnv).OMB_JAC_BIN;
-  if (jacBin) childEnv.OMB_JAC_BIN = jacBin;
-  // Driver-kind gate for the Jac seam (comma list or "all"); like OMB_JAC_BIN
-  // it is resolved from the parent because the child env is sealed.
-  const jacDrivers = parentEnv.OMB_JAC_DRIVERS?.trim();
-  if (jacDrivers) childEnv.OMB_JAC_DRIVERS = jacDrivers;
+  // Jac routines harness entries are resolved by jacFixtureEnv above; a
+  // missing jac simply leaves the seam off (the server still boots and
+  // /api/routines answers 503).
   return childEnv;
 }
 

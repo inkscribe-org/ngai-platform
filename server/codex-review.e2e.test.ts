@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, expect, it } from "vitest";
 
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
+import { jacFixtureEnv } from "./testing/fixture-env.ts";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const fake = join(root, "server", "testing", "fake-codex-app-server.ts");
@@ -24,7 +25,7 @@ const api = async (method: string, path: string, body?: unknown) => {
 };
 const start = async () => {
   child = spawn(process.execPath, [join(root, "server", "index.ts")], {
-    cwd: root, env: { ...process.env, HOME: home, USERPROFILE: home, OMB_PORT: String(port) },
+    cwd: root, env: { ...process.env, HOME: home, USERPROFILE: home, OMB_PORT: String(port), ...jacFixtureEnv() },
     stdio: ["ignore", "pipe", "pipe"],
   });
   stderr = "";

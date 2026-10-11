@@ -11,6 +11,7 @@ import { z } from "zod";
 import { launchVerificationServer, verificationServerEnvironment } from "../scripts/control-omb.ts";
 import type { GroupTask, WireBot, WireGroup, WireMessage } from "../shared/wire.ts";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
+import { jacFixtureEnv } from "./testing/fixture-env.ts";
 
 it("keeps live room questions fenced but allows task changes after their turn settles and restarts", async () => {
   const gates = mkdtempSync(join(tmpdir(), "omb-room-question-gates-"));
@@ -106,7 +107,7 @@ it("keeps live room questions fenced but allows task changes after their turn se
     const log = openSync(fixture.info.logPath, "a", 0o600);
     restarted = spawn(process.execPath, ["--experimental-strip-types", fileURLToPath(new URL("./index.ts", import.meta.url))], {
       cwd: fileURLToPath(new URL("../", import.meta.url)),
-      env: verificationServerEnvironment(env, fixture.info.dataDir, Number(new URL(fixture.info.url).port)),
+      env: { ...verificationServerEnvironment(env, fixture.info.dataDir, Number(new URL(fixture.info.url).port)), ...jacFixtureEnv() },
       stdio: ["ignore", log, log],
     });
     closeSync(log);

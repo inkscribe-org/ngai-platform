@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 import { launchVerificationServer, runControlOmb } from "../scripts/control-omb.ts";
 import { waitForExit } from "./testing/cleanup.ts";
+import { jacFixtureEnv } from "./testing/fixture-env.ts";
 
 // Deliberate opt-in: never discover the user's CLI or install a dependency.
 // The supplied binary runs against synthetic config and an owned loopback API.
@@ -75,11 +76,12 @@ test("persists per-conversation OpenCode efforts and sends them through ACP afte
   const isolatedEnv: NodeJS.ProcessEnv = {
     HOME: dataDir, USERPROFILE: dataDir, OMB_DATA_DIR: dataDir,
     APPDATA: join(dataDir, "AppData", "Roaming"), LOCALAPPDATA: join(dataDir, "AppData", "Local"),
-    XDG_CONFIG_HOME: join(dataDir, ".config"), XDG_CACHE_HOME: join(dataDir, ".cache"),
+    XDG_CONFIG_HOME: join(dataDir, ".config"),
     XDG_DATA_HOME: join(dataDir, ".local", "share"), HERMES_HOME: join(dataDir, ".hermes"),
-    TEMP: join(dataDir, "tmp"), TMP: join(dataDir, "tmp"), TMPDIR: join(dataDir, "tmp"),
+    TEMP: join(dataDir, "tmp"), TMP: join(dataDir, "tmp"),
     OMB_PORT: new URL(url).port, OMB_WEBHOOK_PORT: String(Number(new URL(url).port) + 1),
     PATH: dirname(process.execPath), FAKE_CLAUDE_MODE: "happy",
+    ...jacFixtureEnv(),
   };
   for (const key of ["SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "LANG", "LC_ALL", "TZ"]) {
     if (process.env[key]) isolatedEnv[key] = process.env[key];

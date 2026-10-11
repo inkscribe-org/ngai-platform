@@ -15,6 +15,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
+import { jacFixtureEnv } from "./testing/fixture-env.ts";
 import { freePortBlock } from "./testing/ports.ts";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
@@ -152,13 +153,14 @@ describe("a slow cloud computer start", () => {
       cwd: ROOT,
       env: {
         PATH: process.env.PATH, ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
-        HOME: home, USERPROFILE: home, OMB_DATA_DIR: data, TEMP: home, TMP: home, TMPDIR: home,
+        HOME: home, USERPROFILE: home, OMB_DATA_DIR: data, TEMP: home, TMP: home,
         OMB_PORT: String(port), OMB_WEBHOOK_PORT: String(port + 1),
         OMB_BOX_API: `${relayBase}/own-key-must-not-be-used`,
         OMB_CLOUD_BOAT_URL: `${relayBase}/relay/api/box/v1`,
         OMB_CLOUD_BOAT_TOKEN: INCLUDED,
         OMB_CLOUD_COMPUTER_START_WAIT_MS: String(CALL_WAIT_MS),
         OMB_CLOUD_COMPUTER_START_BUDGET_MS: String(START_BUDGET_MS),
+        ...jacFixtureEnv(),
       },
       stdio: ["ignore", "pipe", "pipe"],
     });

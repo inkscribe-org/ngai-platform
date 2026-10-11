@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 import { launchVerificationServer, runControlOmb, verificationServerEnvironment } from "../scripts/control-omb.ts";
 import { waitForExit } from "./testing/cleanup.ts";
+import { jacFixtureEnv } from "./testing/fixture-env.ts";
 
 const SPARE = "spare";
 const FAKE_CLI = fileURLToPath(new URL("./testing/fake-claude-cli.ts", import.meta.url));
@@ -63,7 +64,7 @@ async function withEngines(check: (fixture: Fixture) => Promise<void>) {
     const log = openSync(logPath, "a", 0o600);
     server = spawn(process.execPath, ["--experimental-strip-types", fileURLToPath(new URL("./index.ts", import.meta.url))], {
       cwd: fileURLToPath(new URL("..", import.meta.url)),
-      env: verificationServerEnvironment({}, dataDir, Number(new URL(url).port)), stdio: ["ignore", log, log],
+      env: { ...verificationServerEnvironment({}, dataDir, Number(new URL(url).port)), ...jacFixtureEnv() }, stdio: ["ignore", log, log],
     });
     closeSync(log);
     await expect.poll(async () => {

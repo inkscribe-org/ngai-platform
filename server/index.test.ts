@@ -22,10 +22,10 @@ import {
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { z } from "zod";
 
-import { operatorJacEnv } from "./jac-binary.ts";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 import { startFakeHttpMcp } from "./testing/fake-http-mcp-server.ts";
 import { startFakeOAuth } from "./testing/fake-oauth-server.ts";
+import { jacFixtureEnv } from "./testing/fixture-env.ts";
 import { freePortBlock } from "./testing/ports.ts";
 import { openSse } from "./testing/sse.ts";
 import { FILE_MAX_BYTES, IMAGE_MAX_BYTES } from "./attachments.ts";
@@ -38,19 +38,13 @@ import {
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(SERVER_DIR, "..");
-// HOME is redirected by setup.ts: resolve the pinned jacup binary and the
-// warm jac runtime cache from the account's real home.
-const OPERATOR_JAC = operatorJacEnv(process.env);
-const JAC_BIN = OPERATOR_JAC.OMB_JAC_BIN;
-// Every spawned server's Jac sidecar: HOME is redirected per server, so
-// pass the pinned binary and the operator's cache (runtime extraction,
-// Postgres socket dir) or each one unpacks the ~830MB runtime afresh.
-const JAC_ENV = {
-  ...(JAC_BIN ? { OMB_JAC_BIN: JAC_BIN } : {}),
-  XDG_CACHE_HOME: OPERATOR_JAC.XDG_CACHE_HOME,
-  // Run the suite through the Jac drivers: OMB_JAC_DRIVERS=all pnpm vitest …
-  ...(process.env.OMB_JAC_DRIVERS ? { OMB_JAC_DRIVERS: process.env.OMB_JAC_DRIVERS } : {}),
-};
+// Every spawned server's Jac sidecar comes from the one fixture-env helper:
+// HOME is redirected per server, so the env carries the operator's pinned
+// binary and warm cache (runtime extraction, shared Postgres socket dir),
+// the drivers gate (OMB_JAC_DRIVERS=all pnpm vitest …), and the stable
+// jac tmpdir. JAC_BIN gates the one-time harness-wait below.
+const JAC_ENV = jacFixtureEnv();
+const JAC_BIN = JAC_ENV.OMB_JAC_BIN;
 const FAKE_CLAUDE_CLI = join(SERVER_DIR, "testing", "fake-claude-cli.ts");
 const FAKE_MCP_SERVER = join(SERVER_DIR, "testing", "fake-mcp-server.ts");
 const PORT = 18800 + Math.floor(Math.random() * 10_000);
