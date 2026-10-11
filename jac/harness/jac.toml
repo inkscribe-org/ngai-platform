@@ -2,4 +2,4 @@
 name = "harness"
 kind = "service"
 entry-point = "harness"
-jac-version = "0.37.21"
+jac-version = "0.37.25"

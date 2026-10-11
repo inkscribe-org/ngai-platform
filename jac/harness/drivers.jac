@@ -42,10 +42,7 @@ def _guard(omb_token: any) -> dict[str, any] {
 
 def _resolve_bridge_url -> any {
     if _state["bridge_url"] is None {
-        # 0.37.21 rejects any str stored into a None-initialized glob dict
-        # slot (E1001, literal-narrowed per key); dict.update bypasses the
-        # subscript-assign narrowing while keeping the None/""/URL semantics.
-        _state.update({"bridge_url": bridge_url_from_env()});
+        _state["bridge_url"] = bridge_url_from_env();
     }
     return _state["bridge_url"] or None;
 }

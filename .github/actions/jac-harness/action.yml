@@ -9,10 +9,10 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Install jac 0.37.21
+    - name: Install jac 0.37.25
       shell: bash
       run: |
-        curl -fsSL https://raw.githubusercontent.com/jaseci-labs/jaseci/main/scripts/install.sh | bash -s -- --version 0.37.21
+        curl -fsSL https://raw.githubusercontent.com/jaseci-labs/jaseci/main/scripts/install.sh | bash -s -- --version 0.37.25
         jac --version
     - name: Pin harness file mtimes
       # jac keys its compile cache on every jac/harness file's mtime+size;

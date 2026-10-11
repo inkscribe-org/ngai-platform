@@ -148,12 +148,11 @@ Learned during the phase-0 spike (`jac/spike/`); keep updated as we hit more:
   node-side (shim keeps the inner TS instance's auth methods).
   `driver_stub` in `drivers.jac` is the seam fixture (fake-CLI
   analogue), not dead code.
-- 0.37.21 quirks hit by the port (workarounds in-tree; the first is a
-  real defect fixed upstream by 0.37.25 — bump the pin to shed the
-  rest deliberately, not by accident):
-  - `glob _s: dict[str, any] = {"k": None}` narrows the slot to
-    NoneType — `_s["k"] = "str"` is E1001 at compile. Workaround:
-    `_state.update({...})` (see `drivers.jac _resolve_bridge_url`).
+- 0.37.25 pin (bumped from 0.37.21 on 2026-10-11; the None-initialized
+  glob-dict-slot narrowing defect was fixed upstream in 0.37.25 and its
+  `_state.update` workaround in `drivers.jac _resolve_bridge_url` removed).
+  Remaining quirks hit by the port (workarounds in-tree; shed each
+  deliberately only when a fix lands, never by accident):
   - No lambda, no backslash line continuations, no `pass` statement;
     conditional expressions reject a middle `is not None` test;
     tuple unpacking `a, b = f()` is a parse error (index instead);
@@ -224,7 +223,7 @@ reference port. For each subsystem:
   (its `beforeAll` waits for `/api/routines` to answer 200).
 - `jac test` waits 60s then fails on Postgres unless run with
   `TMPDIR=~/.cache/jac/tmp` (the shared daemon's socket dir).
-- Validate: `jac check` + `jac test` on the pin (0.37.21), `tsc -p
+- Validate: `jac check` + `jac test` on the pin (0.37.25), `tsc -p
   tsconfig.server.json`, affected vitest files, one live `jac run` smoke.
 
 ## 9. Seam transport + verification runbook (learned 2026-10-10)
@@ -257,7 +256,7 @@ for bot1 (waited 20000ms)" / "missing turn for bot1", `index.test.ts`
 end-to-end run** (and after every merge that touches `jac/harness`):
 ```
 cd jac/harness && OMB_DATA_DIR=$(mktemp -d) TMPDIR=~/.cache/jac/tmp \
-  ~/.local/share/jacup/versions/0.37.21/jac run --no-client -p 47352
+  ~/.local/share/jacup/versions/0.37.25/jac run --no-client -p 47352
 # ready when POST /function/driver_state answers {"ok": true, ...}
 ```
 Each git worktree has its own `.jac/` cache — a fresh worktree is cold.
@@ -292,8 +291,9 @@ conflicts are mechanical: each port appends a block to the end of
 side worktree while an `index.test.ts` run is using the main tree (spawned
 servers re-read sources mid-run).
 
-**Checked, not a bug**: `[?field == field]` in a node filter — on 0.37.21
-the right-hand side resolves to the enclosing function's parameter, not the
+**Checked, not a bug**: `[?field == field]` in a node filter — on 0.37.25
+(as on 0.37.21) the right-hand side resolves to the enclosing function's
+parameter, not the
 node's field (W3040 is only a checker warning; `graph.jac thread_node /
 bot_node` return the right node).
 
