@@ -1285,6 +1285,7 @@ rather than discovered when U1 lands.
 | #9683 | compile cache keyed on mtime | CI warm cache | pin mtimes in CI (done) |
 | #8805 | (closed 2026-08-31; was about release gating) Intel-mac binary still absent in v0.37.25 | #9943 | file the abort as its own issue (U1) |
 | #9959 | embedded PG `ensure()` re-runs every request: no-op `def:pub` 40–60 ms, two transactions | every UI call + streamed-turn write (A2) | none app-side (`JAC_DB_URL` can't address the embedded socket); fix upstream |
+| (new, file it) | `@restspec` custom paths are not mounted for colocated service apps (only `/function/`, `/walker/` re-prefixed) — A1 F2 | C0 custom-route compat | C0's single dispatcher endpoint maps today's paths onto `def:pub`s |
 | #9164 | redundant compilation (we added: every module compiled twice, pass 2 = 79 % of cold compile) | A5, dev loop, CI | CI warm cache |
 | #9411 | three commits per walker request, each re-hashing every loaded anchor | walker-heavy endpoints (A2 throughput) | — |
 
@@ -1298,8 +1299,8 @@ Profiling findings are tracked as #9959 (per-request Postgres setup —
 
 | WS | Title | Status | Owner | PR |
 |---|---|---|---|---|
-| A1 | Desktop topology spike | not started | | |
-| A2 | Persistence | decided: graph store on Postgres; spike (a)–(f) not started | | |
+| A1 | Desktop topology spike | findings recorded (`spikes/2026-10-11-a1-desktop-topology.md`): sv capabilities ✓, release colocation via web-app backend ✓, desktop builds crash on multi-app workspaces (upstream fix PR'd), topology (a) impossible on 0.37.25 (#9946 confirmed); launch/latency numbers recorded | | |
+| A2 | Persistence | decided: graph store on Postgres; spike part 1 done (`spikes/2026-10-11-a2-persistence.md`): offline first run ✓ (12.0 s cold, `JAC_PG_DIST`+`JAC_CACHE_HOME`), per-app isolation ✓ (cost: runtime duplicated; #9944 ask = pg-bucket root_env), write throughput fails threshold (~30 ms floor = #9959/#9411); (d)–(k) into C2-model | | |
 | A3 | Helper processes without node | not started | | |
 | A4 | Event feed prototype | not started | | |
 | A5 | Compile cost | partial (CI warm cache + mtime pin done) | | #1 |
