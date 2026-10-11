@@ -15,15 +15,14 @@ import { createHash } from "node:crypto";
 import { screenSurfaceForTool, screenTouchingTool } from "../shared/tool-surface.ts";
 export { screenSurfaceForTool, screenTouchingTool };
 
-/** sha256 over the base64 frame — the same fingerprint the model-side
- * observation dedupe uses (server/computer-observation.ts). */
+/** sha256 over the base64 frame — one stable fingerprint per settled frame. */
 export function screenFrameHash(png: string): string {
   return createHash("sha256").update(png).digest("hex");
 }
 
 /** A settled frame is news only when it differs from the frame the reader
- * can already see. With nothing to compare against it fails open, like the
- * observation dedupe does: an unshown screen beats a wrongly hidden one. */
+ * can already see. With nothing to compare against it fails open: an unshown
+ * screen beats a wrongly hidden one. */
 export function settledFrameIsNews(shownFrameHash: string | undefined, png: string): boolean {
   return shownFrameHash === undefined || screenFrameHash(png) !== shownFrameHash;
 }

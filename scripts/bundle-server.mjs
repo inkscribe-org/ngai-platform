@@ -161,13 +161,6 @@ if (existsSync(join(root, "enterprise", "server", "index.ts"))) {
 // esbuild would inline index.js into it.
 copyFileSync(join(root, "scripts", "desktop-server-entry.mjs"), join(root, "dist-server", "desktop-entry.mjs"));
 
-// The model catalog snapshot (server/model-catalog/catalog.ts) is read from
-// disk, not inlined: 1.5 MB of JSON has no place in index.js. The bundle looks
-// for it under model-catalog/ beside itself. Its MIT notice is inside the file.
-const catalogSnapshot = join(root, "dist-server", "model-catalog", "models-dev.snapshot.json");
-mkdirSync(dirname(catalogSnapshot), { recursive: true });
-copyFileSync(join(server, "model-catalog", "models-dev.snapshot.json"), catalogSnapshot);
-
 // Pi loads this through its own jiti and supplies TypeBox. Inline our local
 // policy module so the extension also works without the source checkout;
 // keep the Pi-owned dependency external and retain the .ts loading contract.
