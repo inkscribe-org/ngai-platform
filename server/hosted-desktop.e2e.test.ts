@@ -11,6 +11,7 @@ import { createServer } from "node:http";
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, it } from "vitest";
+import { jacAvailable } from "./testing/fixture-env.ts";
 import { launchVerificationServer, runControlOmb } from "../scripts/control-omb.ts";
 
 const BOAT_TOKEN = "box_verification_fixture";
@@ -49,7 +50,7 @@ function mcpClient(server: { command: string; args: string[]; env: Record<string
   return { request, close };
 }
 
-it("keeps the bot's own engine on the cloud computer, and a failed place never breaks the bot", async () => {
+it.skipIf(!jacAvailable())("keeps the bot's own engine on the cloud computer, and a failed place never breaks the bot", async () => {
   const rows: Array<{ id: string; name: string; state: string }> = [];
   const commands: string[] = [];
   let prompts = 0;

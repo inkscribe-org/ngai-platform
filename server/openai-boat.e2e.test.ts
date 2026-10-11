@@ -1,8 +1,9 @@
 import { createServer } from "node:http";
 import { expect, it } from "vitest";
+import { jacAvailable } from "./testing/fixture-env.ts";
 import { launchVerificationServer, runControlOmb } from "../scripts/control-omb.ts";
 
-it("keeps the selected API model for direct, group and scheduled Boat turns and preserves human control", async () => {
+it.skipIf(!jacAvailable())("keeps the selected API model for direct, group and scheduled Boat turns and preserves human control", async () => {
   const rows: Array<{ id: string; name: string; state: string }> = [];
   const requests: any[] = [];
   const commands: string[] = [];

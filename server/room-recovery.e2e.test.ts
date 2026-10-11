@@ -3,12 +3,12 @@ import { closeSync, openSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
+import { jacAvailable, jacFixtureEnv } from "./testing/fixture-env.ts";
 import { launchVerificationServer, runControlOmb } from "../scripts/control-omb.ts";
 import { handleToolCall, request } from "../scripts/mcp-server.ts";
 import { waitForExit } from "./testing/cleanup.ts";
-import { jacFixtureEnv } from "./testing/fixture-env.ts";
 
-it("boots and reports an interrupted routine back to its source room", async () => {
+it.skipIf(!jacAvailable())("boots and reports an interrupted routine back to its source room", async () => {
   const fixture = await launchVerificationServer();
   const { url, dataDir, logPath } = fixture.info;
   let restarted: ChildProcess | undefined;

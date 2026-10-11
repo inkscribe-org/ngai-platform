@@ -3,9 +3,10 @@ import { connect, type Socket } from "node:net";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { expect, it } from "vitest";
-import { jacHarnessAvailable, launchVerificationServer, runControlOmb } from "../scripts/control-omb.ts";
+import { launchVerificationServer, runControlOmb } from "../scripts/control-omb.ts";
+import { jacAvailable } from "./testing/fixture-env.ts";
 
-const itJac = it.skipIf(!jacHarnessAvailable());
+const itJac = it.skipIf(!jacAvailable());
 itJac("reports every run into the bot's main thread while fresh executions, approvals, deletion and unread stay reachable", async () => {
   const fixture = await launchVerificationServer();
   const evidence: unknown[] = [{ fixture: fixture.info }];

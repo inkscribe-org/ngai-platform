@@ -15,7 +15,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
-import { jacFixtureEnv } from "./testing/fixture-env.ts";
+import { jacAvailable, jacFixtureEnv } from "./testing/fixture-env.ts";
 import { freePortBlock } from "./testing/ports.ts";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
@@ -27,7 +27,7 @@ const CALL_WAIT_MS = 1_500;
 const START_BUDGET_MS = 20_000;
 const STILL_STARTING = "The cloud computer is still starting. This call was not performed. Take a fresh screenshot in a moment.";
 
-describe("a slow cloud computer start", () => {
+describe.skipIf(!jacAvailable())("a slow cloud computer start", () => {
   let home = "";
   let dumpFile = "";
   let finishFile = "";

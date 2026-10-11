@@ -10,12 +10,12 @@ import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { freePortBlock } from "./testing/ports.ts";
-import { jacFixtureEnv } from "./testing/fixture-env.ts";
+import { jacAvailable, jacFixtureEnv } from "./testing/fixture-env.ts";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 
-describe("lazy host claim and pin on use (issue #1650)", () => {
+describe.skipIf(!jacAvailable())("lazy host claim and pin on use (issue #1650)", () => {
   let home = "";
   let data = "";
   let ui = "";

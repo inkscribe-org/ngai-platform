@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { launchVerificationServer, runControlOmb, type VerificationServer } from "../scripts/control-omb.ts";
 import { handleToolCall, request } from "../scripts/mcp-server.ts";
 import { memoryDate } from "./workspace.ts";
+import { jacAvailable } from "./testing/fixture-env.ts";
 
 describe("independent bot tasks through the isolated control surface", () => {
   let session: VerificationServer;
@@ -396,7 +397,7 @@ describe("independent bot tasks through the isolated control surface", () => {
     expect(final.tasks.find((task: any) => task.taskId === taskB).modelSelection.model).toBe(models[1]);
   }, 45_000);
 
-  it("cancels a detached routine on its captured provider after an idle sibling changes the default", async () => {
+  it.skipIf(!jacAvailable())("cancels a detached routine on its captured provider after an idle sibling changes the default", async () => {
     const created = await tool("create_bot", { name: "Routine provider fixture", instance_id: "claude", model: models[0] });
     const botId = created.bot.id;
     const selectedThread = created.bot.activeTaskId;
@@ -480,7 +481,7 @@ describe("independent bot tasks through the isolated control surface", () => {
     evidence.push({ parallelThreadsInOneProjectFolder: true, botId, taskA, taskB });
   }, 45_000);
 
-  it.skipIf(process.platform !== "darwin")("claims the shared computer only on first use and keeps a sibling stop from releasing it", async () => {
+  it.skipIf(process.platform !== "darwin" || !jacAvailable())("claims the shared computer only on first use and keeps a sibling stop from releasing it", async () => {
     // The fake provider only receives this inert descriptor; no UI driver is
     // launched and the descriptor lives inside the fixture's disposable home.
     const descriptorDir = join(session.info.dataDir, "Library", "Application Support", "OpenMausBot");
@@ -523,7 +524,7 @@ describe("independent bot tasks through the isolated control surface", () => {
     await control(["interrupt", "--bot", botId, "--task", taskA]);
   }, 45_000);
 
-  it("runs an unattended task in the bot's own level, still carding what the provider asks, while a sibling runs attended", async () => {
+  it.skipIf(!jacAvailable())("runs an unattended task in the bot's own level, still carding what the provider asks, while a sibling runs attended", async () => {
     const created = await tool("create_bot", { name: "Unattended fixture", instance_id: "claude", model: models[0] });
     const botId = created.bot.id;
     expect((await api("PATCH", `/api/bots/${botId}`, { approvalMode: "auto" })).status).toBe(200);

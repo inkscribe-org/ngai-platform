@@ -33,6 +33,7 @@ import {
 import { VPS_CONTAINER_LABEL, VPS_IMAGE, VPS_MANAGED_LABEL, VPS_VIEWER_LABEL, vpsContainerName } from "./vps-computer.ts";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 import type { RoutineSchedule } from "../shared/routines.ts";
+import { jacAvailable } from "./testing/fixture-env.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const FAKE_CLI = join(SERVER_DIR, "testing", "fake-acp-cli.ts");
@@ -42,7 +43,7 @@ const IMAGE_ID = `sha256:${"a".repeat(64)}`;
 const CONTAINER_ID = "b".repeat(64);
 
 // the fake docker is a POSIX shell script, like every process fixture here
-const posixOnly = describe.skipIf(process.platform === "win32");
+const posixOnly = describe.skipIf(process.platform === "win32" || !jacAvailable());
 
 function imageInspectJson(): string {
   return JSON.stringify([

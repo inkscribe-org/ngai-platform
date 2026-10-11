@@ -411,13 +411,6 @@ export function verificationServerEnvironment(parentEnv: NodeJS.ProcessEnv, data
 
 export { resolveJacBinary };
 
-/** Whether a verification server would actually get a Jac routines
- * harness: the seam is on (OMB_JAC unset or not "0") and a binary can be
- * resolved. Routine e2e tests skip on this — with the seam off the server
- * still boots but /api/routines answers 503. */
-export function jacHarnessAvailable(env: NodeJS.ProcessEnv = process.env): boolean {
-  return env.OMB_JAC !== "0" && resolveJacBinary(env) !== null;
-}
 
 /** Start one foreground-owned, fake-engine server with no access to user data. */
 export async function launchVerificationServer(

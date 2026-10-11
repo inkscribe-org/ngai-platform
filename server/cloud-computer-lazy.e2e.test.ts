@@ -14,7 +14,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
-import { jacFixtureEnv } from "./testing/fixture-env.ts";
+import { jacAvailable, jacFixtureEnv } from "./testing/fixture-env.ts";
 import { freePortBlock } from "./testing/ports.ts";
 import { openSse, type SseRecorder } from "./testing/sse.ts";
 
@@ -27,7 +27,7 @@ const FRAME = Buffer.from("/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAMCAgMCAgMDAwMEAwMEB
 type Row = { id: string; name?: string; state: string };
 type Request = { method: string; path: string };
 
-describe("a cloud computer starts only when the bot uses it", () => {
+describe.skipIf(!jacAvailable())("a cloud computer starts only when the bot uses it", () => {
   let home = "";
   let data = "";
   let dumpFile = "";

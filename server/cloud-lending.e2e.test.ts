@@ -21,8 +21,9 @@ import { cloudPairingSignature } from "./cloud-home.ts";
 import { WATCHER_OPTIONS_CARD_BOT_ID } from "../shared/options-card.ts";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 import { markLeftBehind } from "./testing/cloud-left-behind.ts";
-import { jacFixtureEnv } from "./testing/fixture-env.ts";
+import { jacAvailable, jacFixtureEnv } from "./testing/fixture-env.ts";
 import { freePortBlock } from "./testing/ports.ts";
+const itJac = it.skipIf(!jacAvailable());
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const HOST = "omb-t-0123456789ab.fly.dev";
@@ -160,13 +161,13 @@ afterAll(async () => {
   if (home) await removeTempDir(home);
 });
 
-it("offers lending on a Cloud home with the maintainer flag still off", async () => {
+itJac("offers lending on a Cloud home with the maintainer flag still off", async () => {
   expect((await api("GET", "/.well-known/openmausbot/environment")).body.capabilities).toMatchObject({ sharedComputers: true });
   expect((await api("GET", "/api/config", { token: owner })).body.features.sharedComputers).toBe(false);
   expect(await api("GET", "/api/shared-computers", { token: owner })).toEqual({ status: 200, body: { computers: [] } });
 });
 
-it("the person's Mac, lent through the real connector, is usable by the owner's conversations and routines, never by what a guest left behind or a webhook", async () => {
+itJac("the person's Mac, lent through the real connector, is usable by the owner's conversations and routines, never by what a guest left behind or a webhook", async () => {
   const newBot = async (name: string) => (await api("POST", "/api/bots", { token: owner, body: { name, modelSelection: { instanceId: "claude", model: "claude-sonnet-5" } } })).body.bot;
   const routineFor = async (botName: string, prompt = "Read plan.md from my Mac.") => {
     const created = await api("POST", "/api/routines", { token: owner, body: {

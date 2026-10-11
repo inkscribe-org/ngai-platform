@@ -16,11 +16,12 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSy
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { afterAll, beforeAll, expect, it } from "vitest";
+import { afterAll, beforeAll, expect, it as vitestIt } from "vitest";
 import { cloudPairingSignature } from "./cloud-home.ts";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
-import { jacFixtureEnv } from "./testing/fixture-env.ts";
+import { jacAvailable, jacFixtureEnv } from "./testing/fixture-env.ts";
 import { freePortBlock } from "./testing/ports.ts";
+const it = vitestIt.skipIf(!jacAvailable());
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const HOST = "omb-t-0123456789ab.fly.dev";
@@ -111,6 +112,7 @@ async function boot(asCloud: boolean) {
 async function shutdown() { if (child) await waitForExit(child, { signal: "SIGTERM" }); child = undefined; }
 
 beforeAll(async () => {
+  if (!jacAvailable()) return;
   home = mkdtempSync(join(tmpdir(), "omb-cloud-personal-"));
   dataDir = join(home, ".openmausbot");
   mkdirSync(dataDir, { recursive: true });
@@ -279,6 +281,7 @@ async function agentTools() {
 }
 
 afterAll(async () => {
+  if (!jacAvailable()) return;
   for (const proxy of proxies) proxy.kill();
   await shutdown();
   if (home) await removeTempDir(home);

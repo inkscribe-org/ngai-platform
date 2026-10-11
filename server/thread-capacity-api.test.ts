@@ -11,7 +11,9 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-omb.ts";
 import { removeTempDir } from "./testing/cleanup.ts";
 import { openSse } from "./testing/sse.ts";
+import { jacAvailable } from "./testing/fixture-env.ts";
 
+const itJac = it.skipIf(!jacAvailable());
 describe("per-bot thread capacity through an isolated HTTP fixture", () => {
   let fixture: VerificationServer;
   let model: string;
@@ -184,7 +186,7 @@ describe("per-bot thread capacity through an isolated HTTP fixture", () => {
     expect(existsSync(threadFile(threads[11], "json"))).toBe(false);
   }, 60_000);
 
-  it("dispatches routines into a free slot without waiting for whole-bot idle", async () => {
+  itJac("dispatches routines into a free slot without waiting for whole-bot idle", async () => {
     await limit(2);
     const { botId, threads } = await botWithThreads(2);
     expect((await send(botId, threads[0], "HOLD_ONE_SLOT")).body.queued).toBeUndefined();
@@ -233,7 +235,7 @@ describe("per-bot thread capacity through an isolated HTTP fixture", () => {
     }
   }, 90_000);
 
-  it("starts a routine in the bot's project folder while another thread works there", async () => {
+  itJac("starts a routine in the bot's project folder while another thread works there", async () => {
     await limit(2);
     const project = mkdtempSync(join(tmpdir(), "omb-collide-"));
     projectDirs.push(project);
@@ -292,7 +294,7 @@ describe("per-bot thread capacity through an isolated HTTP fixture", () => {
     }
   }, 90_000);
 
-  it("holds routine runs behind an active group turn and starts them once it ends", async () => {
+  itJac("holds routine runs behind an active group turn and starts them once it ends", async () => {
     const { botId } = await botWithThreads(1);
     const createdRoom = await api("POST", "/api/groups", {
       name: "Routine gate room",
@@ -350,7 +352,7 @@ describe("per-bot thread capacity through an isolated HTTP fixture", () => {
     }
   }, 120_000);
 
-  it("dispatches delegated handoffs into the standing thread without waiting for whole-bot idle", async () => {
+  itJac("dispatches delegated handoffs into the standing thread without waiting for whole-bot idle", async () => {
     await limit(2);
     const target = await botWithThreads(2);
     const source = await botWithThreads(1);

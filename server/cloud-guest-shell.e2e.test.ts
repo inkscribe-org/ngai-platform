@@ -20,7 +20,7 @@ import { spawnWithSecrets } from "./cloud-home-start.ts";
 import { cloudPairingSignature } from "./cloud-home.ts";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 import { markLeftBehind } from "./testing/cloud-left-behind.ts";
-import { jacFixtureEnv } from "./testing/fixture-env.ts";
+import { jacAvailable, jacFixtureEnv } from "./testing/fixture-env.ts";
 import { freePortBlock } from "./testing/ports.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
@@ -234,7 +234,7 @@ it("a guest's Codex turn has no shell: no environment, shell and file reads off;
   expect(turnStart().argv).not.toContain("features.shell_tool=false");
 }, 60_000);
 
-it("a guest's request to a bot whose engine needs its shell is refused in one plain line; the owner's is not", async () => {
+it.skipIf(!jacAvailable())("a guest's request to a bot whose engine needs its shell is refused in one plain line; the owner's is not", async () => {
   const bot = await newBot("Shelled bot", "shelled");
   const guests = await guestThread(bot);
   const refused = await say(owner, bot, "Hello.", guests);
@@ -278,7 +278,7 @@ it("a guest's Claude turn has no command-running tool and no read outside its fo
   expect((await api("POST", `/api/bots/${bot.id}/interrupt`, { token: owner, body: { threadId: mine } })).status).toBe(200);
 }, 60_000);
 
-it("work a guest's turn hands a teammate is the guest's too: the teammate runs confined", async () => {
+it.skipIf(!jacAvailable())("work a guest's turn hands a teammate is the guest's too: the teammate runs confined", async () => {
   const bot = await newBot("Delegator", "held");
   const teammate = await newBot("Delegate", "held");
   const dump = join(home, "claude.json");
@@ -298,7 +298,7 @@ it("work a guest's turn hands a teammate is the guest's too: the teammate runs c
   expect(argv[argv.indexOf("--tools") + 1]).toBe("Read,Grep,Glob,Edit,Write,WebSearch");
 }, 60_000);
 
-it("a run of a guest's routine is the guest's: confined, and so is work it hands a teammate", async () => {
+it.skipIf(!jacAvailable())("a run of a guest's routine is the guest's: confined, and so is work it hands a teammate", async () => {
   const bot = await newBot("Routine bot", "held");
   const dump = join(home, "claude.json"), teammateDump = join(home, "teammate.json");
   const argv = (file: string) => JSON.parse(readFileSync(file, "utf8")).argv as string[];
@@ -340,7 +340,7 @@ it("a run of a guest's routine is the guest's: confined, and so is work it hands
   rmSync(join(home, "release"), { force: true });
 }, 90_000);
 
-it("a guest's request never folds into a turn running in the owner's conversation", async () => {
+it.skipIf(!jacAvailable())("a guest's request never folds into a turn running in the owner's conversation", async () => {
   const teammate = await newBot("Busy teammate", "teammate");
   const teammateDump = join(home, "teammate.json"), dump = join(home, "claude.json");
   const bot = await newBot("Asking bot", "held");
@@ -362,7 +362,7 @@ it("a guest's request never folds into a turn running in the owner's conversatio
   rmSync(join(home, "release"), { force: true });
 }, 60_000);
 
-it("a routine from before this update, on an engine that cannot be confined, tells the owner what to do", async () => {
+it.skipIf(!jacAvailable())("a routine from before this update, on an engine that cannot be confined, tells the owner what to do", async () => {
   const bot = await newBot("Shelled routine bot", "shelled");
   const created = await api("POST", "/api/routines", { token: owner, body: { name: "From before", prompt: "Check the site.", botId: bot.id, enabled: false,
     schedule: { type: "interval", everyMinutes: 60, anchorAt: Date.now() + 3_600_000 } } });
@@ -373,7 +373,7 @@ it("a routine from before this update, on an engine that cannot be confined, tel
     .toContain("This routine was made before this update. Open it and save it once to run it with full access.");
 }, 60_000);
 
-it("a room a guest opened with a bot whose engine needs its shell refuses the turn in one plain line", async () => {
+it.skipIf(!jacAvailable())("a room a guest opened with a bot whose engine needs its shell refuses the turn in one plain line", async () => {
   const bot = await newBot("Shelled room bot", "shelled");
   const room = await api("POST", "/api/groups", { token: owner, body: { memberIds: [bot.id], name: "Guest's room", setup: { bulletin: "", defaultResponder: { kind: "everyone" } } } });
   expect(room.status, JSON.stringify(room.body)).toBe(201);

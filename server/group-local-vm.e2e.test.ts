@@ -9,9 +9,10 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { writeFileAtomic } from "./atomic.ts";
 import { cloudHomePrompt } from "./system-prompt.ts";
 import { freePortBlock } from "./testing/ports.ts";
-import { jacFixtureEnv } from "./testing/fixture-env.ts";
+import { jacAvailable, jacFixtureEnv } from "./testing/fixture-env.ts";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 
+const describeJac = describe.skipIf(!jacAvailable());
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 let child: ChildProcess;
 let startServer: (computerWaitMaxMs?: number) => Promise<void>;
@@ -57,6 +58,7 @@ const computer = (d: any) => d.mcpConfig.mcpServers.computer;
 const gate = (c: any) => fetch(c.env.OMB_CONTROL_URL, { headers: { authorization: `Bearer ${c.env.OMB_CONTROL_TOKEN}` } });
 
 beforeAll(async () => {
+  if (!jacAvailable()) return;
   fixtureHome = mkdtempSync(join(tmpdir(), "omb-group-vm-"));
   stateFile = join(fixtureHome, "vm.json");
   dumpFile = join(fixtureHome, "dump.json");
@@ -129,6 +131,7 @@ beforeAll(async () => {
   await startServer();
 });
 afterAll(async () => {
+  if (!jacAvailable()) return;
   if (stateFile) vmState();
   if (finishFile) writeFileSync(finishFile, "finish");
   await waitForExit(child, { signal: "SIGTERM" });
@@ -172,7 +175,7 @@ async function room() {
 const send = (id: string) => api("POST", `/api/groups/${id}/messages`, { text: "Reply once." });
 const stop = (id: string) => api("POST", `/api/groups/${id}/interrupt`, {});
 
-describe("Local VM stop and resume", () => {
+describeJac("Local VM stop and resume", () => {
   it("stops an idle shared VM without deleting it, remembers why across restart, and starts it again", async () => {
     vmState({ containers: ["shared"], idleMs: 300 });
     await api("PATCH", "/api/config", { localVm: { mode: "shared", idleTimeoutMinutes: 5 } });
@@ -217,7 +220,7 @@ describe("Local VM stop and resume", () => {
   });
 });
 
-describe("Group Local VM ownership on the real isolated server", () => {
+describeJac("Group Local VM ownership on the real isolated server", () => {
   it("cleans the remaining rooms after one cleanup operation fails", async () => {
     rooms.set("missing-fixture-room", []);
     const current = await room();
@@ -892,6 +895,44 @@ describe("Group Local VM ownership on the real isolated server", () => {
     await idle(bots[0].id);
     await stop(group.id); await idle(bots[0].id);
   });
+  it("keeps a replacement room speaker's VM lease after a late completion", async () => {
+    const { bots, group } = await room();
+    try {
+      rmSync(dumpFile, { force: true }); rmSync(finishFile, { force: true });
+      rmSync(stateFile + ".latecompleted", { force: true });
+      rmSync(stateFile + ".completionheld", { force: true });
+      rmSync(stateFile + ".releasecompletion", { force: true });
+      await send(group.id);
+      const first = computer(await dump());
+      expect((await gate(first)).status).toBe(200);
+      vmState({ holdCompletion: true, stall: true });
+      await until(() => api("GET", "/api/bots?messages=30"), state => JSON.stringify(state).includes("the turn was stopped"));
+      await idle(bots[0].id);
+      await until(() => existsSync(stateFile + ".completionheld"), Boolean);
+      expect((await gate(first)).status).toBe(401);
+      vmState(); rmSync(dumpFile, { force: true });
+      await api("PATCH", `/api/groups/${group.id}`, { defaultResponder: { kind: "member", botId: bots[1].id } });
+      await send(group.id);
+      const next = computer(await dump());
+      expect((await gate(next)).status).toBe(200);
+      expect((await api("GET", "/api/bots?messages=0")).bots.find((entry: { id: string; busy: boolean }) => entry.id === bots[1].id)?.busy).toBe(true);
+      writeFileSync(stateFile + ".releasecompletion", "release");
+      await until(() => existsSync(stateFile + ".latecompleted"), Boolean);
+      expect(readFileSync(stateFile + ".completionheld", "utf8")).not.toBe("");
+      // The fixture marker precedes listener calls; handleRuntimeEvent queues its
+      // fold on an async chain and exposes no response as a completion barrier.
+      await new Promise(resolve => setTimeout(resolve, 100));
+      expect((await gate(next)).status).toBe(200);
+      expect((await api("GET", "/api/bots?messages=0")).bots.find((entry: { id: string; busy: boolean }) => entry.id === bots[1].id)?.busy).toBe(true);
+    } finally {
+      writeFileSync(stateFile + ".releasecompletion", "release");
+      vmState({ containers: [] }); writeFileSync(finishFile, "finish");
+      await stop(group.id);
+      await idle(bots[0].id);
+      await idle(bots[1].id);
+    }
+  }, 30_000);
+
   it("revokes the previous member and rejects cross-bot control after a shared desktop handoff", async () => {
     const { bots, group } = await room();
     await send(group.id);

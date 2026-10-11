@@ -2,9 +2,10 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, it } from "vitest";
+import { jacAvailable } from "./testing/fixture-env.ts";
 import { launchVerificationServer, runControlOmb } from "../scripts/control-omb.ts";
 
-it("preserves conversations and scheduled work when deletion cannot save, then safely retries", async () => {
+it.skipIf(!jacAvailable())("preserves conversations and scheduled work when deletion cannot save, then safely retries", async () => {
   const fixture = await launchVerificationServer();
   const { url, dataDir, logPath } = fixture.info;
   const botsFile = join(dataDir, "bots.json");

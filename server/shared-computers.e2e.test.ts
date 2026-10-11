@@ -9,6 +9,8 @@ import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-omb.ts";
 import { createComputerSharing, type SharedFolder } from "../electron/computer-sharing.mjs";
 import { sessionCookieName } from "./request-auth.ts";
+import { jacAvailable } from "./testing/fixture-env.ts";
+const itJac = it.skipIf(!jacAvailable());
 
 let fixture: VerificationServer;
 let connector: ReturnType<typeof createComputerSharing>;
@@ -53,6 +55,7 @@ const commandAlive = (marker: string) => {
 };
 
 beforeAll(async () => {
+  if (!jacAvailable()) return;
   fixture = await launchVerificationServer({ FAKE_CLAUDE_MODE: "hang" });
   // Computer sharing ships off (features.sharedComputers, config.ts). Turn it
   // on for this fixture before anything is paired or dispatched: the routes,
@@ -115,6 +118,7 @@ async function proxyForTurn(start: () => Promise<void>): Promise<ChildProcess> {
 }
 
 afterAll(async () => {
+  if (!jacAvailable()) return;
   connector?.close(); proxy?.kill();
   if (fixture) {
     const receipt = `${fixture.info.logPath}.computer-sharing.json`;
@@ -124,7 +128,7 @@ afterAll(async () => {
   }
 });
 
-it("asks only after pairing; Not now remembers the choice and grants nothing", async () => {
+itJac("asks only after pairing; Not now remembers the choice and grants nothing", async () => {
   const info = await connector.observe(env);
   expect(info?.environmentId).toBeTruthy(); expect(info?.sessionId).toBe(pairing.session.id);
   connector.decline(env, info!);
@@ -134,7 +138,7 @@ it("asks only after pairing; Not now remembers the choice and grants nothing", a
   evidence.push("post-pair identity and remembered Not now; zero default access");
 });
 
-it("executes real read-only folder requests through the real agent MCP and connector", async () => {
+itJac("executes real read-only folder requests through the real agent MCP and connector", async () => {
   await connector.save(env, { folders: [folder], terminal: false, computer: false }, await connector.identity(env));
   await expect.poll(() => connector.state(env.id).connected, { timeout: 8000 }).toBe(true);
   const available = await computers();
@@ -151,7 +155,7 @@ it("executes real read-only folder requests through the real agent MCP and conne
   evidence.push("real MCP → paired HTTP → local read, with write/terminal/screen/traversal denied");
 });
 
-it("explicit edits and terminal work; old credentials and other sessions cannot impersonate the desktop", async () => {
+itJac("explicit edits and terminal work; old credentials and other sessions cannot impersonate the desktop", async () => {
   const old = storedGrant();
   await connector.save(env, { folders: [{ ...folder, write: true }], terminal: true, computer: false }, await connector.identity(env));
   await expect.poll(() => connector.state(env.id).connected, { timeout: 8000 }).toBe(true);
@@ -172,7 +176,7 @@ it("explicit edits and terminal work; old credentials and other sessions cannot 
   evidence.push("explicit hash-guarded edit and real terminal; cross-session, stale-secret, CSRF, local-control gate refusals");
 }, 60_000);
 
-it("another person's conversation can neither see nor use the lent desktop", async () => {
+itJac("another person's conversation can neither see nor use the lent desktop", async () => {
   // A second person paired to the same server (client scope is enough to chat).
   const opened = await api("POST", "/api/auth/pairing", { label: "Another person", scopes: ["client"] });
   const intruder = (await api("POST", "/api/auth/pair", { code: opened.body.code })).body;
@@ -195,7 +199,7 @@ it("another person's conversation can neither see nor use the lent desktop", asy
   evidence.push("owner partition: another paired person's bot sees no computers and cannot read the owner's file by id");
 }, 45_000);
 
-it("a routine acts for nobody, even one the lender created: it sees and uses no computer", async () => {
+itJac("a routine acts for nobody, even one the lender created: it sees and uses no computer", async () => {
   const routineBot = (await api("POST", "/api/bots", { name: "Routine bot" })).body.bot;
   const owner = { authorization: `Bearer ${pairing.token}` };
   const routine = await proxyForTurn(async () => {
@@ -218,7 +222,7 @@ it("a routine acts for nobody, even one the lender created: it sees and uses no 
   evidence.push("fail-closed principal: a routine turn (created by the lender) sees no computers");
 }, 45_000);
 
-it("a bot whose computer is off cannot drive the lent screen, even when screen control is lent", async () => {
+itJac("a bot whose computer is off cannot drive the lent screen, even when screen control is lent", async () => {
   await connector.save(env, { folders: [{ ...folder, write: true }], terminal: true, computer: true }, await connector.identity(env));
   await expect.poll(() => connector.state(env.id).connected, { timeout: 8000 }).toBe(true);
   expect((await api("PATCH", `/api/bots/${bot.id}`, { computer: "off" })).status).toBe(200);
@@ -234,7 +238,7 @@ it("a bot whose computer is off cannot drive the lent screen, even when screen c
   evidence.push("a bot set to no computer is refused the lent screen before anything reaches the desktop");
 }, 30_000);
 
-it("revocation stops a running command, prevents further access and stays off after restart", async () => {
+itJac("revocation stops a running command, prevents further access and stays off after restart", async () => {
   const pending = operation("run_command", { command: process.platform === "win32" ? "Start-Sleep -Seconds 20" : "sleep 20" });
   await new Promise(resolve => setTimeout(resolve, 150));
   connector.revoke(env);
@@ -248,7 +252,7 @@ it("revocation stops a running command, prevents further access and stays off af
   evidence.push("in-flight cancellation, no further access, durable revocation across connector restart");
 });
 
-it("disabling the local gate cancels a live job even while the remote workspace still permits sharing", async () => {
+itJac("disabling the local gate cancels a live job even while the remote workspace still permits sharing", async () => {
   connector.close();
   connector = createComputerSharing({
     file: grantFile, environments: () => [env], cuaConnection: async () => null,
@@ -271,7 +275,7 @@ it("disabling the local gate cancels a live job even while the remote workspace 
   evidence.push("local flag withdrawal cancels a live remote command and prevents further access despite remote opt-in");
 }, 45_000);
 
-it("withdrawing the workspace flag closes pending jobs and refuses a previously advertised tool", async () => {
+itJac("withdrawing the workspace flag closes pending jobs and refuses a previously advertised tool", async () => {
   connector.close(); localSharingEnabled = true;
   connector = createComputerSharing({
     file: grantFile, environments: () => [env], cuaConnection: async () => null,

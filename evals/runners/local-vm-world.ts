@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { removeTempDir, waitForExit } from "../../server/testing/cleanup.ts";
 import { freePortBlock } from "../../server/testing/ports.ts";
+import { jacFixtureEnv } from "../../server/testing/fixture-env.ts";
 import type { Scenario, Step } from "../types.ts";
 import { buildScriptedPlan } from "../providers/mock/scripted-plan.ts";
 import { BaseWorld, type WorldContext } from "./base-world.ts";
@@ -36,7 +37,7 @@ export class LocalVmWorld extends BaseWorld {
     writeFileSync(join(ui, "index.html"), "<title>evals</title>");
     writeFileSync(join(ui, "assets", "eval.css"), "body{}");
     mkdirSync(data, { recursive: true });
-    this.vmState({});
+    this.vmState({ containers: [] });
     writeFileSync(join(data, "config.json"), JSON.stringify({
       instances: {
         claude: {
@@ -57,12 +58,12 @@ export class LocalVmWorld extends BaseWorld {
       LOCALAPPDATA: join(this.fixtureHome, "localappdata"),
       TEMP: this.fixtureHome,
       TMP: this.fixtureHome,
-      TMPDIR: this.fixtureHome,
       OMB_PORT: String(port),
       OMB_WEBHOOK_PORT: String(port + 1),
       OMB_STATIC_DIR: ui,
       OMB_TEST_VM_STATE: this.stateFile,
       ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
+      ...jacFixtureEnv(),
     };
     const child = this.child = spawn(process.execPath, ["--import", hooks, join(ROOT, "server", "index.ts")], {
       cwd: ROOT,
@@ -93,6 +94,8 @@ export class LocalVmWorld extends BaseWorld {
     // <dataRoot>/skills target is the directory index.ts hot-loads user
     // skills from; anywhere else and installed skills never reach the prompt.
     await this.initBase(base, this.planPath + ".evidence.jsonl", join(data, "eval-gates"));
+    const provisioned = await this.api.post("/api/local-computer/run", {});
+    if (provisioned.status >= 300) throw new Error("VM fixture provision failed: " + JSON.stringify(provisioned.body));
     for (const bot of scenario.bots) {
       const created = await this.api.post("/api/bots", { name: bot.name });
       if (created.status >= 300) throw new Error("bot create failed: " + JSON.stringify(created.body));
@@ -154,10 +157,21 @@ export class LocalVmWorld extends BaseWorld {
       case "pollComputerGate": {
         const computer = this.computers.get(step.bot);
         if (computer === undefined) throw new Error("no captured computer for " + step.bot);
-        const response = await fetch(computer.url, { headers: { authorization: "Bearer " + computer.token } });
-        const body = (await response.json().catch(() => ({}))) as Record<string, unknown>;
-        ctx.observations[step.saveAs] = { httpStatus: response.status, ...body };
-        return "gate answered " + response.status + ": " + JSON.stringify(body);
+        const readGate = async () => {
+          const response = await fetch(computer.url, { headers: { authorization: "Bearer " + computer.token } });
+          const body = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+          return { httpStatus: response.status, ...body };
+        };
+        const observation = step.waitUntilUnheld
+          ? await waitUntil(
+            "computer gate for " + step.bot + " to open",
+            readGate,
+            (value) => value.httpStatus === 200 && value.held === false,
+            step.timeoutMs ?? 20_000,
+          )
+          : await readGate();
+        ctx.observations[step.saveAs] = observation;
+        return "gate answered " + observation.httpStatus + ": " + JSON.stringify(observation);
       }
       default:
         throw new Error("step " + step.kind + " is not available in the localVm world");

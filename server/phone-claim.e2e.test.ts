@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { freePortBlock } from "./testing/ports.ts";
-import { jacFixtureEnv } from "./testing/fixture-env.ts";
+import { jacAvailable, jacFixtureEnv } from "./testing/fixture-env.ts";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 
 // Phone exclusivity on the real server (issue #1663): trigger-term matching
@@ -115,6 +115,7 @@ async function withPhoneProxy<T>(spec: any, run: (call: (name: string) => Promis
 }
 
 beforeAll(async () => {
+  if (!jacAvailable()) return;
   fixtureHome = mkdtempSync(join(tmpdir(), "omb-phone-claim-"));
   writeFileSync(join(fixtureHome, "devices"), 'process.stdout.write("List of devices attached\\n");');
   dumpFile = join(fixtureHome, "dump.json");
@@ -147,6 +148,7 @@ beforeAll(async () => {
   }, Boolean);
 });
 afterAll(async () => {
+  if (!jacAvailable()) return;
   if (finishFile) writeFileSync(finishFile, "finish");
   await waitForExit(child, { signal: "SIGTERM" });
   if (fixtureHome) await removeTempDir(fixtureHome);
@@ -154,6 +156,7 @@ afterAll(async () => {
 const bots: string[] = [];
 const rooms: string[] = [];
 afterEach(async () => {
+  if (!jacAvailable()) return;
   writeFileSync(finishFile, "finish");
   for (const id of rooms.splice(0)) await api("POST", `/api/groups/${id}/interrupt`, {});
   for (const id of bots.splice(0)) {
@@ -174,7 +177,7 @@ const makeRoom = async (name: string, botId: string) => {
 };
 const roomIdle = (groupId: string) => until(() => api("GET", "/api/bots?messages=0"), s => s.groups.find((g: any) => g.id === groupId)?.working !== true);
 
-describe("Lazy phone claim on the real server", () => {
+describe.skipIf(!jacAvailable())("Lazy phone claim on the real server", () => {
   it("rejects a retained proxy after its turn settles, before and after a new owner claims", async () => {
     rmSync(finishFile, { force: true });
     const holder = await makeBot("Old retained phone caller");

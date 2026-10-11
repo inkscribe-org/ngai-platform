@@ -2937,8 +2937,8 @@ function noteTeammatesLeftRunning(botId: string, threadId: string, running: Room
   }
 }
 
-async function interruptAllDirectThreads(botId: string): Promise<void> {
-  const threads = store.tasks(botId).filter((task) => task.busy || directTurnDispatchClaims.has(task.threadId) || roomHandoffs.activeDirect(task.threadId) || pendingComputerResumes.has(task.threadId));
+async function interruptAllDirectThreads(botId: string, excludedThreadId?: string): Promise<void> {
+  const threads = store.tasks(botId).filter((task) => task.threadId !== excludedThreadId && (task.busy || directTurnDispatchClaims.has(task.threadId) || roomHandoffs.activeDirect(task.threadId) || pendingComputerResumes.has(task.threadId)));
   // Revoke every sibling before yielding to any provider teardown.
   for (const task of threads) {
     cancelDirectTurnDispatch(botId, task.threadId);
@@ -6081,6 +6081,23 @@ function notify(notification: Notification | null) {
 // Group threads: the fold needs to know WHO is talking — the turn engine
 // records the active member here before dispatching its turn.
 const groupSpeakers = new Map<string, { botId: string; name: string; color: string }>();
+// The active speaker's bound provider turn id, or null between the speaker's
+// claim and its dispatch resolving the id. It lets the runtime fold tell the
+// speaker's own completion from a late one for a previous member: a late
+// completion must fold its transcript but never release the current
+// speaker's room ownership or VM lease (the B3 room race).
+const roomSpeakerTurnIds = new Map<string, string | null>();
+
+/** True when a turn.completed carries a provider turn id that cannot be the
+ * room thread's current speaker's turn — a late completion for a previous
+ * member. A completion without an id cannot be attributed, and a speaker
+ * without a bound id (a path that predates the map) is not provably stale:
+ * both settle the room, exactly as the room engine's own event filter does. */
+function staleRoomCompletion(threadId: string, turnId: string | undefined): boolean {
+  if (turnId === undefined || !groupSpeakers.has(threadId)) return false;
+  const bound = roomSpeakerTurnIds.get(threadId);
+  return bound !== undefined && bound !== turnId;
+}
 
 type RoutedBy = NonNullable<Message["routedBy"]>;
 /** Auto-room rounds the decision model routed, by thread: the named
@@ -6184,6 +6201,7 @@ const watchdog = new TurnWatchdog({
       const stalledRoomSpeaker = group && group.busyBotId === turn.botId && speaker?.botId === turn.botId;
       if (stalledRoomSpeaker) {
         groupSpeakers.delete(turn.threadId);
+        roomSpeakerTurnIds.delete(turn.threadId);
         store.patchGroup(group.id, { busyBotId: null, unread: true });
       }
       // A cleared UI busy flag must not strand this finished generation's
@@ -7534,7 +7552,11 @@ const handleRuntimeEvent = async (event: RuntimeEvent): Promise<void> => {
     localVmIdleFor(localVmTarget).touch();
   }
   if (event.type === "turn.completed" && !store.botByThread(event.threadId)) {
-    releaseLocalVmThread(event.threadId);
+    // A room thread's VM lease belongs to its current speaker. A late
+    // completion for a previous member must not release it (the B3 room
+    // race): only the speaker's own bound turn — or a completion without an
+    // id, which the room engine's filter also accepts — may release here.
+    if (!staleRoomCompletion(event.threadId, event.turnId)) releaseLocalVmThread(event.threadId);
   }
   const coordinatorTurnsForThread = groupGoalCoordinatorTurns.get(event.threadId);
   const ambiguousCoordinatorText = !event.turnId && (coordinatorTurnsForThread?.size ?? 0) > 1;
@@ -8231,13 +8253,21 @@ const handleRuntimeEvent = async (event: RuntimeEvent): Promise<void> => {
         liveTurnByThread.delete(event.threadId);
       }
       if (speaker && group?.busyBotId === speaker.botId) {
-        releaseTurnResources(turnResourceOwners.get(event.threadId));
-        groupSpeakers.delete(event.threadId);
-        store.patchGroup(group.id, { busyBotId: null, unread: true });
-        const speakingBot = store.bot(speaker.botId);
-        if (speakingBot?.busy) {
-          store.setActivity(speakingBot.id, "idle");
-          retryDelegationsWaitingOn(speakingBot.id);
+        // A late turn.completed for a previous member arrives while the next
+        // one speaks (the B3 room race). It still folds its transcript and
+        // books its spend above, but only the current speaker's own turn may
+        // release the room's ownership here: the stale turn's resources went
+        // home with its own settle.
+        if (!staleRoomCompletion(event.threadId, event.turnId)) {
+          releaseTurnResources(turnResourceOwners.get(event.threadId));
+          groupSpeakers.delete(event.threadId);
+          roomSpeakerTurnIds.delete(event.threadId);
+          store.patchGroup(group.id, { busyBotId: null, unread: true });
+          const speakingBot = store.bot(speaker.botId);
+          if (speakingBot?.busy) {
+            store.setActivity(speakingBot.id, "idle");
+            retryDelegationsWaitingOn(speakingBot.id);
+          }
         }
       }
       // A delegated turn's terminal state belongs in the A⇄B channel:
@@ -11043,12 +11073,11 @@ async function startTurn(
       // notify.ts encodes: the bot is not working, and the cause is usually
       // a setting only a person can change — an unattended user would
       // otherwise learn nothing until they next opened the thread.
-      //
-      // Only for a turn the person started themselves. A routine reaches
-      // this same catch and then reports through onDispatchError, which
-      // raises routine-failed; buzzing here too would ring twice for one
-      // failure. A delegated sub-turn is reported to the bot that asked
-      // for it, in its own thread, so it does not need a second channel.
+      // Only for a turn the person started themselves. Routines hand this
+      // asynchronous dispatch failure to Jac's failThread transition, which
+      // emits the run's one routine-failed notification.
+      // A delegated sub-turn is reported to the bot that asked for it, not
+      // to a second channel.
       if (opts?.automationSource === undefined && !opts?.commsDepth && !opts?.cardContinuation) {
         notify(
           buildNotification("turn-failed", bot, threadId, redactSecretsInText(message), { avatarUrl: bot.avatarUrl }),
@@ -11531,20 +11560,23 @@ const routineBridgeOps: Record<string, (payload: BridgePayload) => unknown> = {
     return { ok: true };
   },
   start_turn: async (payload) => {
-    let dispatchError: string | null = null;
+    const threadId = bridgeString(payload.threadId);
     try {
       await startTurn(bridgeString(payload.botId), bridgeString(payload.prompt), {
-        threadId: bridgeString(payload.threadId),
+        threadId,
         runOn: payload.runOn as RoutineRunOn | undefined,
         automationSource: (payload.triggerSource || payload.trigger_source || undefined) as RoutineRunTrigger | undefined,
-        onDispatchError: (message) => { dispatchError = message; },
+        onDispatchError: (message) => {
+          // startTurn settles asynchronous setup errors after this bridge
+          // reply. Queue a separate Jac op; returning {ok:false} here is too
+          // early for the callback and would leave the routine running.
+          if (threadId) routines.detached.failThread(threadId, message);
+        },
       });
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) };
     }
-    return dispatchError
-      ? { ok: false, error: dispatchError }
-      : { ok: true, threadId: bridgeString(payload.threadId) };
+    return { ok: true, threadId };
   },
   start_goal: async (payload) => {
     const groupId = bridgeString(payload.groupId);
@@ -12982,6 +13014,7 @@ async function runGroupMemberTurn(
   // The finally block must release exactly this setup, never a newer turn.
   roomSpeaker = { botId: bot.id, name: bot.name, color: bot.color };
   groupSpeakers.set(threadId, roomSpeaker);
+  roomSpeakerTurnIds.set(threadId, null);
   store.patchGroup(readyGroup.id, { busyBotId: bot.id });
   orchestration?.onClaimed?.();
   // The stall completion handler only exists once the provider turn runs
@@ -13324,6 +13357,7 @@ async function runGroupMemberTurn(
   ) {
     if (store.group(group.id)?.busyBotId === bot.id) {
       groupSpeakers.delete(threadId);
+      roomSpeakerTurnIds.delete(threadId);
       store.patchGroup(group.id, { busyBotId: null, unread: true });
     }
     if (store.bot(bot.id)?.busy) {
@@ -13442,6 +13476,7 @@ async function runGroupMemberTurn(
       })
       .then((dispatch) => {
         providerTurnId = dispatch.value.turnId;
+        if (groupSpeakers.get(threadId) === roomSpeaker) roomSpeakerTurnIds.set(threadId, dispatch.value.turnId ?? null);
         bindInternalCapabilityToProviderTurn(threadId, internalGeneration, dispatch.value.turnId);
         orchestration?.onTurnStarted?.(dispatch.value.turnId);
         if (abandoned) {
@@ -13494,6 +13529,7 @@ async function runGroupMemberTurn(
     const currentGroup = store.group(group.id);
     if (currentGroup?.busyBotId === bot.id) {
       groupSpeakers.delete(threadId);
+      roomSpeakerTurnIds.delete(threadId);
       store.patchGroup(currentGroup.id, { busyBotId: null, unread: true });
     }
     const currentBot = store.bot(bot.id);
@@ -13526,6 +13562,7 @@ async function runGroupMemberTurn(
       const speaker = groupSpeakers.get(threadId);
       if (currentGroup?.busyBotId === bot.id && speaker?.botId === bot.id) {
         groupSpeakers.delete(threadId);
+        roomSpeakerTurnIds.delete(threadId);
         store.patchGroup(group.id, { busyBotId: null, unread: true });
       }
       const currentBot = store.bot(bot.id);
@@ -13549,6 +13586,7 @@ async function runGroupMemberTurn(
   // duplicate group frame or clear a newer speaker's state.
   if (store.group(group.id)?.busyBotId === bot.id) {
     groupSpeakers.delete(threadId);
+    roomSpeakerTurnIds.delete(threadId);
     store.patchGroup(group.id, { busyBotId: null, unread: true });
     if (store.bot(bot.id)?.busy) {
       store.setActivity(bot.id, "idle");
@@ -13686,6 +13724,7 @@ async function runGroupMemberTurn(
     if (!retainRoomVmLease) releaseRoomVmLease();
     if (!providerDispatched && roomSpeaker && groupSpeakers.get(threadId) === roomSpeaker) {
       groupSpeakers.delete(threadId);
+      roomSpeakerTurnIds.delete(threadId);
       watchdog.settle(threadId);
       if (store.group(group.id)?.busyBotId === bot.id) store.patchGroup(group.id, { busyBotId: null });
       if (store.bot(bot.id)?.busy) {
@@ -15823,6 +15862,7 @@ async function stopCompanyInstances(ids: string[]) {
     releaseLocalVmThread(threadId);
     watchdog.settle(threadId); closeOpenApprovals(threadId);
     groupSpeakers.delete(threadId);
+    roomSpeakerTurnIds.delete(threadId);
     if (group) store.patchGroup(group.id, { busyBotId: null });
     store.setActivity(bot.id, "idle");
   }
@@ -15905,6 +15945,7 @@ async function reloadProviders() {
       closeOpenApprovals(threadId);
       if (groupSpeakers.get(threadId) !== speaker) continue;
       groupSpeakers.delete(threadId);
+      roomSpeakerTurnIds.delete(threadId);
       const group = store.groupByThread(threadId);
       if (group) store.patchGroup(group.id, { busyBotId: null });
       store.setActivity(speaker.botId, "idle");
@@ -22091,7 +22132,6 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         store.bots
           .filter((bot) => bot.computer === "local")
           .map(async (bot) => {
-            await interruptAllDirectThreads(bot.id);
             const routineRun = await routines.activeBotRunForBot(bot.id);
             if (routineRun) {
               cancelDirectTurnDispatch(bot.id, routineRun.threadId);
@@ -22100,6 +22140,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
               }
               await routines.cancelRun(routineRun.id);
             }
+            await interruptAllDirectThreads(bot.id, routineRun?.threadId);
             const groupTurn = activeGroupTurnForBot(bot.id);
             if (groupTurn) {
               cancelGroupTurnOperations(groupTurn.group.id, groupTurn.threadId);

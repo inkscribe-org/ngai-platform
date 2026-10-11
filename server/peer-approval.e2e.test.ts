@@ -3,11 +3,11 @@ import { closeSync, existsSync, openSync, readFileSync, rmSync, writeFileSync } 
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
+import { jacAvailable, jacFixtureEnv } from "./testing/fixture-env.ts";
 import { launchVerificationServer, runControlOmb, verificationServerEnvironment } from "../scripts/control-omb.ts";
 import { waitForExit } from "./testing/cleanup.ts";
-import { jacFixtureEnv } from "./testing/fixture-env.ts";
 
-it("preserves peer approval expiry through real HTTP responses and durable delegation receipts", async () => {
+it.skipIf(!jacAvailable())("preserves peer approval expiry through real HTTP responses and durable delegation receipts", async () => {
   const fixture = await launchVerificationServer(process.env);
   const { url, dataDir, logPath } = fixture.info;
   const gate = join(dataDir, "finish-provider");

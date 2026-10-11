@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 
+import { jacAvailable } from "./testing/fixture-env.ts";
 import { launchVerificationServer } from "../scripts/control-omb.ts";
 import { NEWER_PACKAGE_MESSAGE, parsePackageDocument } from "../shared/package-format.ts";
 import { includedSkills, requestedSkills, startingTicks } from "../src/lib/team-share-skills.ts";
@@ -12,7 +13,7 @@ const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwA
 // The recipe in docs/verification/team-sharing.md: a disposable fake-engine
 // server, a team built through the public API, Share team (dry run and save),
 // renames, then the file imported back as an untrusted file.
-it("shares one team whole (minus chat history) and imports it back as new, inert copies", async () => {
+it.skipIf(!jacAvailable())("shares one team whole (minus chat history) and imports it back as new, inert copies", async () => {
   const fixture = await launchVerificationServer();
   console.log(JSON.stringify({ fixture: fixture.info }));
   const url = fixture.info.url;

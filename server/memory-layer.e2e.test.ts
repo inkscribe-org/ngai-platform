@@ -8,12 +8,13 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it } from "vitest";
+import { jacAvailable } from "./testing/fixture-env.ts";
 import { launchVerificationServer, runControlOmb } from "../scripts/control-omb.ts";
 import type { WireBot } from "../shared/wire.ts";
 import { CAPTURE_MARKER } from "./memory-capture.ts";
 import { TIDY_MARKER } from "./memory-tidy.ts";
 
-it("recalls, captures, suggests, forgets and tidies a bot's memory", async () => {
+it.skipIf(!jacAvailable())("recalls, captures, suggests, forgets and tidies a bot's memory", async () => {
   const scratch = mkdtempSync(join(tmpdir(), "omb-memory-layer-"));
   const routes = join(scratch, "routes.json");
   const prompts = join(scratch, "prompts.jsonl");

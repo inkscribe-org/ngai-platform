@@ -3,10 +3,11 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, it } from "vitest";
-import { jacHarnessAvailable, launchVerificationServer, runControlOmb } from "../scripts/control-omb.ts";
+import { launchVerificationServer, runControlOmb } from "../scripts/control-omb.ts";
 import { nextCronRuns } from "../shared/routine-schedule.ts";
+import { jacAvailable } from "./testing/fixture-env.ts";
 
-const itJac = it.skipIf(!jacHarnessAvailable());
+const itJac = it.skipIf(!jacAvailable());
 itJac("takes cron through the real routine tools and confirmation, preserving its zone and rejecting invalid API input", async () => {
   const fixture = await launchVerificationServer(process.env, undefined, undefined, undefined, undefined, { scripted: true });
   const evidence: unknown[] = [{ fixture: fixture.info }];

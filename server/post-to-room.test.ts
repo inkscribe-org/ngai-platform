@@ -16,11 +16,13 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it as vitestIt } from "vitest";
 
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 import { freePortBlock } from "./testing/ports.ts";
+import { jacAvailable } from "./testing/fixture-env.ts";
 
+const it = vitestIt.skipIf(!jacAvailable());
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const FAKE_CLAUDE_CLI = join(SERVER_DIR, "testing", "fake-claude-cli.ts");
 const TEST_CAPABILITY_KEY = "post-to-room-fixture-capability";
@@ -209,6 +211,7 @@ const makeRoom = async (
 };
 
 beforeAll(async () => {
+  if (!jacAvailable()) return;
   const base = await freePortBlock([0, 1]);
   PORT = base;
   WEBHOOK_PORT = base + 1;
@@ -265,6 +268,7 @@ beforeAll(async () => {
 }, 60_000);
 
 afterAll(async () => {
+  if (!jacAvailable()) return;
   await waitForExit(child, { signal: "SIGTERM" });
   await removeTempDir(home);
 });

@@ -19,13 +19,14 @@ import { dirname, join } from "node:path";
 import { connect } from "node:net";
 import { createInterface } from "node:readline";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { afterAll, beforeAll, expect, it } from "vitest";
+import { afterAll, beforeAll, expect, it as vitestIt } from "vitest";
 import { createComputerSharing } from "../electron/computer-sharing.mjs";
 import { cloudPairingSignature } from "./cloud-home.ts";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 import { markLeftBehind } from "./testing/cloud-left-behind.ts";
-import { jacFixtureEnv } from "./testing/fixture-env.ts";
+import { jacAvailable, jacFixtureEnv } from "./testing/fixture-env.ts";
 import { freePortBlock } from "./testing/ports.ts";
+const it = vitestIt.skipIf(!jacAvailable());
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const HOST = "omb-t-0123456789ab.fly.dev";
@@ -165,6 +166,7 @@ const reads = async (call: Awaited<ReturnType<typeof toolsFor>>) => {
 };
 
 beforeAll(async () => {
+  if (!jacAvailable()) return;
   home = mkdtempSync(join(tmpdir(), "omb-cloud-lending-memory-"));
   const dataDir = join(home, ".openmausbot");
   mkdirSync(dataDir, { recursive: true });
@@ -254,6 +256,7 @@ await import(${JSON.stringify(fake)});
 }, 40_000);
 
 afterAll(async () => {
+  if (!jacAvailable()) return;
   connector?.close();
   for (const proxy of proxies) proxy.kill();
   if (child) await waitForExit(child, { signal: "SIGTERM" });

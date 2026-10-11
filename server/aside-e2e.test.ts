@@ -16,13 +16,14 @@ import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
+import { jacAvailable } from "./testing/fixture-env.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const FAKE_CLAUDE = join(SERVER_DIR, "testing", "fake-claude-cli.ts");
 const FAKE_ACP = join(SERVER_DIR, "testing", "fake-acp-cli.ts");
 const PORT = 18800 + Math.floor(Math.random() * 10_000);
 const BASE = `http://127.0.0.1:${PORT}`;
-const posixOnly = describe.skipIf(process.platform === "win32");
+const posixOnly = describe.skipIf(process.platform === "win32" || !jacAvailable());
 
 const ENVELOPE_OPEN = "[aside from @Asker — peer context, not steering; continue your current plan unless this directly changes a fact you are using]";
 const ASIDE_TEXT = "ping from fake";

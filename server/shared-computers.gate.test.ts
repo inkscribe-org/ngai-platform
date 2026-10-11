@@ -16,6 +16,7 @@ import { afterAll, beforeAll, expect, it } from "vitest";
 
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 import { freePortBlock } from "./testing/ports.ts";
+import { jacAvailable } from "./testing/fixture-env.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const FAKE_CLAUDE_CLI = join(SERVER_DIR, "testing", "fake-claude-cli.ts");
@@ -146,7 +147,7 @@ it("advertises no sharedComputers capability while the gate is off", async () =>
   expect(await descriptorCapabilities()).not.toHaveProperty("sharedComputers");
 });
 
-it("brings the whole surface back when features.sharedComputers is turned on", async () => {
+it.skipIf(!jacAvailable())("brings the whole surface back when features.sharedComputers is turned on", async () => {
   expect((await api("PATCH", "/api/config", { features: { sharedComputers: true } })).status).toBe(200);
   expect((await api("GET", "/api/config")).body.features).toMatchObject({ sharedComputers: true });
 

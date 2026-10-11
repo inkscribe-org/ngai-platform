@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
 
 const workflow = parse(readFileSync(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8"));
-const requiredRuntimeJobs = ["jac-warm", "vitest", "behavior-evals", "jac-conformance", "packaged-server", "windows-cua", "electron-smokes"];
+const requiredRuntimeJobs = ["jac-warm", "vitest", "behavior-evals", "jac-conformance", "jac-windows", "packaged-server", "windows-cua", "electron-smokes"];
 // Jobs that boot the Jac harness wait for its one shared warm compile.
 const jacConsumers = ["vitest", "behavior-evals", "jac-conformance", "ui-smoke"];
 

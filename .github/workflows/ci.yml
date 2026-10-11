@@ -87,8 +87,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # The harness and pure desktop capabilities stay portable across all
-        # supported host platforms. POSIX-only process tests self-skip.
+        # Linux installs and warms Jac; Jac-backed suites self-skip where its
+        # binary is unavailable. POSIX-only process tests also self-skip.
         # scripts/ci-scope.mjs picks the platforms: PRs run Linux and Windows
         # (the account runs only five macOS jobs at a time, and a PR used to
         # queue seven), main pushes, merge groups and manual runs add macOS.
@@ -118,10 +118,33 @@ jobs:
         # timeout.
         run: node --input-type=commonjs -e "require('electron')"
       - name: Run tests
-        # The github-actions reporter turns each failure into an annotation
-        # on the PR, so the failing test and its assertion are readable
-        # without opening the job log.
-        run: pnpm exec vitest run --shard=${{ matrix.shard }}/4 --reporter=default --reporter=github-actions
+        # The JSON report feeds the per-shard skipped-test counter below;
+        # the other reporters retain console output and PR annotations.
+        run: pnpm exec vitest run --shard=${{ matrix.shard }}/4 --reporter=default --reporter=github-actions --reporter=json --outputFile.json=vitest-results-${{ matrix.os }}-${{ matrix.shard }}.json
+      - name: Report skipped test count
+        if: always()
+        shell: bash
+        run: |
+          report="vitest-results-${{ matrix.os }}-${{ matrix.shard }}.json"
+          if [ ! -f "$report" ]; then
+            echo "## Vitest skips — ${{ matrix.os }}, shard ${{ matrix.shard }}/4" >> "$GITHUB_STEP_SUMMARY"
+            echo "- Skipped tests: **unavailable** (Vitest produced no JSON report)" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          node --input-type=module - "$report" <<'NODE'
+          import { appendFileSync, readFileSync } from "node:fs";
+          const report = JSON.parse(readFileSync(process.argv[2], "utf8"));
+          const skipped = (report.testResults ?? []).reduce(
+            (total, file) => total + (file.assertionResults ?? []).filter(
+              (test) => ["pending", "skipped", "todo"].includes(test.status),
+            ).length,
+            0,
+          );
+          const heading = "## Vitest skips — ${{ matrix.os }}, shard ${{ matrix.shard }}/4";
+          const detail = `- Skipped tests: **${skipped}** (includes tests gated by Jac availability)\n`;
+          console.log(detail.trim());
+          appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${heading}\n\n${detail}\n`);
+          NODE
       - name: Broker and Electron unit tests
         if: matrix.shard == 1
         run: pnpm broker:test && pnpm test:electron

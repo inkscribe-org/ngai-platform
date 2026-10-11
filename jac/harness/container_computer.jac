@@ -79,6 +79,13 @@ glob SHARED_LOCAL_VM_TARGET: dict[str, any] = {
 glob _cv: dict[str, any] = {"hooks": {}, "cache": {}};
 glob _cv_lock: any = threading.Lock();
 
+# Test fixture seam (server/testing/group-local-vm-hooks.mjs): when
+# OMB_TEST_VM_STATE is set, the container boundary below is the state file's
+# fixture. Before the computers port the same fixture was a node-side module
+# mock of container-computer.ts; the boundary now lives here, so the fixture
+# had to move with it. Only e2e fixtures and behavior evals set the variable.
+glob TEST_VM_STATE: str = os.environ.get("OMB_TEST_VM_STATE") or "";
+
 class ContainerError(Exception) {
     # Error carrying an HTTP status (JS `Object.assign(new Error, {status})`).
 }
@@ -593,7 +600,102 @@ def _parallel(fn: any, items: list[any]) -> list[any] {
     }
 }
 
+# ── VM fixture (OMB_TEST_VM_STATE) ──────────────────────────────────────────
+# The container boundary as the fixture state file describes it. The semantics
+# are the node-side module mock's, verbatim (server/testing/group-local-vm-hooks.mjs):
+# an always-up podman daemon over a container list in the state file, exec
+# recorded to <state>.exec, status entry marked at <state>.entered, and a
+# blocked/blockedTarget gate a test can hold a status probe behind.
+
+def _fixture_read() -> dict[str, any] {
+    with open(TEST_VM_STATE, "r", encoding="utf-8") as f {
+        state = json.loads(f.read() or "{}");
+    }
+    return state if isinstance(state, dict) else {};
+}
+
+def _fixture_write(state: dict[str, any]) {
+    with open(TEST_VM_STATE, "w", encoding="utf-8") as f {
+        f.write(json.dumps(state));
+    }
+}
+
+def _fixture_exists(target: dict[str, any]) -> bool {
+    state = _fixture_read();
+    containers = state.get("containers");
+    if isinstance(containers, list) { return target["key"] in containers; }
+    return not state.get("noContainers");
+}
+
+def _fixture_status(target: dict[str, any]) -> dict[str, any] {
+    with open(TEST_VM_STATE + ".entered", "w", encoding="utf-8") as f {
+        f.write(str(target.get("key") or ""));
+    }
+    while True {
+        state = _fixture_read();
+        if not state.get("blocked") and state.get("blockedTarget") != target["key"] { break; }
+        time.sleep(0.03);
+    }
+    missing = not _fixture_exists(target);
+    stopped = isinstance(state.get("stopped"), list) and target["key"] in state["stopped"];
+    ready = (not missing) and (not stopped) and not state.get("failed");
+    return {
+        "runtime": "podman",
+        "daemonUp": True,
+        "image": True,
+        "create_supported": True,
+        "managed": not missing,
+        "container": "missing" if missing else ("stopped" if stopped else "running"),
+        "ready": ready,
+        "imageMatches": True,
+        "network": "loopback",
+        "security": "hardened",
+        "persistence": "durable",
+        "resumable": stopped,
+        "stopped_at": state.get("stoppedAt") if stopped else None,
+        "problem": None if ready else "fixture desktop unavailable",
+        "container_name": target["containerName"],
+        "target_key": target["key"],
+        "workspace_path": target["workspaceDir"],
+    };
+}
+
+def _fixture_action(action: str, target: dict[str, any]) -> dict[str, any] {
+    state = _fixture_read();
+    containers = state.get("containers");
+    if not isinstance(containers, list) or action not in ["run", "start", "stop", "remove"] {
+        raise Exception("Unexpected container mutation in VM routing test");
+    }
+    if action == "run" {
+        os.makedirs(target["workspaceDir"], exist_ok=True);
+        state["containers"] = list(containers) + [target["key"]];
+    } elif action == "stop" {
+        stopped = list(state.get("stopped") or []);
+        stopped.append(target["key"]);
+        state["stopped"] = stopped;
+        state["stoppedAt"] = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime()) + ".000Z";
+    } elif action == "start" {
+        stopped = list(state.get("stopped") or []);
+        state["stopped"] = [key for key in stopped if key != target["key"]];
+    } else {
+        state["containers"] = [key for key in containers if key != target["key"]];
+    }
+    actions = list(state.get("actions") or []);
+    actions.append({"action": action, "target": target["key"]});
+    state["actions"] = actions;
+    _fixture_write(state);
+    return _fixture_status(target);
+}
+
+def _fixture_exec(target: dict[str, any], command: any) -> dict[str, any] {
+    with open(TEST_VM_STATE + ".exec", "w", encoding="utf-8") as f {
+        f.write(json.dumps({"target": target, "command": command}));
+    }
+    return {"exitCode": 0, "stdout": "fixture command completed", "stderr": "", "timedOut": False};
+}
+
 def container_runtime_status(run: any = None, platform: any = None) -> dict[str, any] {
+    if TEST_VM_STATE { return {"runtime": "podman", "daemonUp": True}; }
     r = run if run is not None else _default_run;
     p = platform if isinstance(platform, str) else _node_platform();
     candidates = ["podman", "docker"] if p == "win32" else [x for x in RUNTIMES if x != "container" or p == "darwin"];
@@ -1081,6 +1183,7 @@ def container_computer_status(run: any = None, platform: any = None, target: any
     r = run if run is not None else _default_run;
     p = platform if isinstance(platform, str) else _node_platform();
     t = target if isinstance(target, dict) else SHARED_LOCAL_VM_TARGET;
+    if TEST_VM_STATE { return _fixture_status(t); }
     status = _empty_status(p, t);
     rt = container_runtime_status(r, p);
     status["available"] = rt["available"];
@@ -1174,6 +1277,7 @@ def container_computer_action(action: str, run: any = None, platform: any = None
     r = run if run is not None else _default_run;
     p = platform if isinstance(platform, str) else _node_platform();
     t = target if isinstance(target, dict) else SHARED_LOCAL_VM_TARGET;
+    if TEST_VM_STATE { return _fixture_action(action, t); }
     if _cacheable(r, p) { _cache_delete(t["key"]); }
     before = container_computer_status(r, p, t);
     runtime = before["runtime"];
@@ -1214,6 +1318,7 @@ def container_computer_action(action: str, run: any = None, platform: any = None
 }
 
 def container_computer_exists(runtime: str, target: dict[str, any], run: any = None) -> bool {
+    if TEST_VM_STATE { return _fixture_exists(target); }
     r = run if run is not None else _default_run;
     try {
         r(runtime, ["inspect", target["containerName"]], 8000);
@@ -1276,6 +1381,7 @@ def clip_exec_output(text: str, limit: int = 20000) -> str {
 }
 
 def container_exec(target: dict[str, any], command: any, timeout_seconds: any = None, runtime: any = None, exec_fn: any = None) -> dict[str, any] {
+    if TEST_VM_STATE { return _fixture_exec(target, command); }
     cmd = command if isinstance(command, str) else "";
     if not cmd.strip() { _fail(400, "command is required"); }
     if len(cmd) > 20000 { _fail(400, "command is too long"); }

@@ -19,6 +19,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import type { DecisionRow } from "./decision-log.ts";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
+import { jacAvailable } from "./testing/fixture-env.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const FAKE_CLI = join(SERVER_DIR, "testing", "fake-acp-cli.ts");
@@ -273,7 +274,7 @@ posixOnly("authorization decisions are logged", () => {
     90_000,
   );
 
-  it(
+  it.skipIf(!jacAvailable())(
     "a webhook turn's card is logged as unattended, in the bot's own mode",
     async () => {
       // A webhook turn runs in the mode the bot has, like any other; the

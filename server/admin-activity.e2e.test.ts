@@ -14,7 +14,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { SessionRegistry } from "./sessions.ts";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
-import { jacFixtureEnv } from "./testing/fixture-env.ts";
+import { jacAvailable, jacFixtureEnv } from "./testing/fixture-env.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const PORT = 28800 + Math.floor(Math.random() * 10_000);
@@ -164,7 +164,7 @@ posixOnly("admin activity log", () => {
     }
   });
 
-  it("records MCP servers, webhooks, bots, a bot's audience and sessions", async () => {
+  it.skipIf(!jacAvailable())("records MCP servers, webhooks, bots, a bot's audience and sessions", async () => {
     const mcp = await api("POST", "/api/mcp/servers", { name: "fixture", command: process.execPath, args: ["--version", "--api-key", ARG_SECRET], env: { FIXTURE_TOKEN: MCP_SECRET } }, BOSS);
     expect(mcp.status, JSON.stringify(mcp.body)).toBe(201);
     const bot = await api("POST", "/api/bots", { name: "Audit Owl" }, BOSS);

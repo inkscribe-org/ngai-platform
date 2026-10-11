@@ -6,11 +6,11 @@ import { closeSync, existsSync, openSync, readFileSync, writeFileSync } from "no
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
+import { jacAvailable, jacFixtureEnv } from "./testing/fixture-env.ts";
 import { launchVerificationServer, runControlOmb } from "../scripts/control-omb.ts";
 import { waitForExit } from "./testing/cleanup.ts";
-import { jacFixtureEnv } from "./testing/fixture-env.ts";
 
-it("applies requested Full Access workflows through MCP without duplicate approvals, while exact Ask tasks still wait", async () => {
+it.skipIf(!jacAvailable())("applies requested Full Access workflows through MCP without duplicate approvals, while exact Ask tasks still wait", async () => {
   const fixture = await launchVerificationServer({}, undefined, undefined, undefined, undefined, { scripted: true });
   const { url, dataDir, logPath } = fixture.info;
   const planPath = join(dataDir, "room-plan.json");

@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { expect, it } from "vitest";
+import { jacAvailable } from "./testing/fixture-env.ts";
 
 import { launchVerificationServer, runControlOmb, verificationServerEnvironment } from "../scripts/control-omb.ts";
 import { request } from "../scripts/mcp-server.ts";
@@ -425,7 +426,7 @@ it("replays a delegated result once after a rewind, and keeps resuming afterward
   expect(f.nativeSession()).toBe(rebuilt);
 }), 90_000);
 
-it("wakes a busy delegate_bot source with the reply that landed during its turn, once and labelled", () => fixture(async (f) => {
+it.skipIf(!jacAvailable())("wakes a busy delegate_bot source with the reply that landed during its turn, once and labelled", () => fixture(async (f) => {
   // The second delegation's reply is held until the revived turn has
   // launched, so it lands while that turn holds its gate — never folded
   // into the turn the first reply woke.
@@ -1056,7 +1057,7 @@ it.skipIf(process.platform === "win32")("gives a delegated return today's fresh 
   expect(count(f.prompt(f.turns().at(-1)), "SETUP_SOUL_RESULT")).toBe(0);
 }), 90_000);
 
-it("gives a delegate_bot source today's fresh session and replay when its soul changed since the session started", () => fixture(async (f) => {
+it.skipIf(!jacAvailable())("gives a delegate_bot source today's fresh session and replay when its soul changed since the session started", () => fixture(async (f) => {
   // Ops's reply is held until the revived turn has launched: under load the
   // wake dispatch can lag past both replies and the soul edit, which would
   // hand the new soul to the revival turn's own session and leave the third

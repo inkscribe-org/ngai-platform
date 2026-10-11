@@ -23,6 +23,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { mentionedBots, normalizeGroupDefaultResponder, roomResponders } from "./store.ts";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
+import { jacAvailable } from "./testing/fixture-env.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const FAKE_CLI = join(SERVER_DIR, "testing", "fake-acp-cli.ts");
@@ -99,7 +100,7 @@ describe("roomResponders", () => {
   });
 });
 
-describe("legacy routine comms e2e (fake ACP fleet)", () => {
+describe.skipIf(!jacAvailable())("legacy routine comms e2e (fake ACP fleet)", () => {
   let child: ChildProcess;
   let home: string;
   let gateFile = "";

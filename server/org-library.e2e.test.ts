@@ -2,6 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, it } from "vitest";
+import { jacAvailable } from "./testing/fixture-env.ts";
 
 import { launchVerificationServer } from "../scripts/control-omb.ts";
 import { canonicalJson, parsePackageDocument } from "../shared/package-format.ts";
@@ -36,7 +37,7 @@ function entry(packageId: string, rel: ReturnType<typeof release>) {
 // The recipe in docs/verification/org-library.md: a disposable fake-engine
 // server, a catalog relayed the way Electron relays it, the release files
 // where Electron stores them, then the renderer's routes.
-it("shows the organization's shelf, adds a team once, and keeps its stamps off the wire", async () => {
+it.skipIf(!jacAvailable())("shows the organization's shelf, adds a team once, and keeps its stamps off the wire", async () => {
   const key = randomBytes(32).toString("hex");
   const fixture = await launchVerificationServer({ ...process.env, OMB_TEST_ORG_LIBRARY_KEY: key });
   console.log(JSON.stringify({ fixture: fixture.info }));

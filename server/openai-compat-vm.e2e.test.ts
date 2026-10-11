@@ -12,7 +12,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { writeFileAtomic } from "./atomic.ts";
 import { freePortBlock } from "./testing/ports.ts";
-import { jacFixtureEnv } from "./testing/fixture-env.ts";
+import { jacAvailable, jacFixtureEnv } from "./testing/fixture-env.ts";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
@@ -93,6 +93,7 @@ const nativeToolNames = (threadId: string): string[] => {
 const idle = (botId: string) => until(() => api("GET", "/api/bots?messages=0"), s => !s.bots.find((b: any) => b.id === botId)?.busy);
 
 beforeAll(async () => {
+  if (!jacAvailable()) return;
   fixtureHome = mkdtempSync(join(tmpdir(), "omb-openai-vm-"));
   stateFile = join(fixtureHome, "vm.json");
   dumpFile = join(fixtureHome, "dump.json");
@@ -175,12 +176,13 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  if (!jacAvailable()) return;
   await waitForExit(child, { signal: "SIGTERM" });
   if (upstream) await new Promise<void>(resolve => upstream.close(() => resolve()));
   if (fixtureHome) await removeTempDir(fixtureHome);
 });
 
-describe("openai-compat Local VM tools", () => {
+describe.skipIf(!jacAvailable())("openai-compat Local VM tools", () => {
   it("mounts the Local VM tools on a strict Works on: Local VM turn", async () => {
     vmState({ containers: [] });
     requests.length = 0;

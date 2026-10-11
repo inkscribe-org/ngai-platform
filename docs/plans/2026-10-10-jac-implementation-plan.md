@@ -102,18 +102,20 @@ supervised by node; node answers every client request.
 | typecheck + lint | pass | |
 | jac harness warm compile | pass (cold compile 148 s on a GitHub runner) | |
 | jac conformance | 1408/1409 Jac tests on run 3 (MCP cancel test race — fixed) | conformance steps not yet reached |
-| behavior evals | 3 fail: `lazy-claim-rejection`, `lazy-claim-screenless`, `lazy-computer-claim` ("no computer mount in dump") | likely computers-port regression (WS-B3) |
+| behavior evals | initial 3 failed on "no computer mount"; after B3, all 3 lazy-claim evals pass | B3 |
 | vitest (ubuntu) | ~95 e2e failures on 2 shards | e2e fixture servers start **without a jac binary** → "routines unavailable" 503 (WS-B1) |
 | vitest (windows/mac) | not yet examined | no jac on those runners |
 | renderer smoke | pass (run 4) | fixed by giving the job the warm harness (`.github/actions/jac-harness`) |
 | packaged server smoke ×2, macOS smokes, package + smoke | fail by design | Electron bundle has no harness; retired with the Electron packaging (WS-F) |
 
-Known pre-existing `index.test.ts` failures with TS drivers (AGENTS §9):
+Historical pre-existing `index.test.ts` failures with TS drivers (AGENTS §9):
 "reports a failed routine once, not twice", "stops a local bot's exact
-channel and routine work through the emergency endpoint", "tells the
-desktop whether to hold the computer awake for a routine due within the
-hour"; "rejects overlapping provider configuration writes" is flaky. With
-`OMB_JAC_DRIVERS=all`: 11 failures, 7 Jac-specific (WS-D1).
+channel and routine work through the emergency endpoint", "tells the desktop
+whether to hold the computer awake for a routine due within the hour";
+"rejects overlapping provider configuration writes" is flaky. B6 resolved
+the first two; the wake-hold case was not reproducible on the current pin.
+The historical `OMB_JAC_DRIVERS=all` baseline had 11 failures, 7 Jac-specific
+(WS-D1).
 
 ---
 
@@ -548,13 +550,17 @@ on a disposable machine/VM, not on the shared dev box.
   matrix entries entirely once the node server is retired (H4).
 
 ### B3. Computer-claim regressions
-- Behavior evals `lazy-claim-rejection`, `lazy-claim-screenless`,
-  `lazy-computer-claim` fail with "no computer mount in dump" since the
-  computers port. Reproduce in CI, fix in `computer_control.jac` /
-  `jac-computers.ts`.
-- Plus the computers agent's room race: a late `turn.completed` releases
-  the *current* speaker's resources (`handleRuntimeEvent` room branch) —
-  fix to release only the owner whose turn completed.
+- The Local VM eval world now provisions the shared fixture VM before Auto
+  turns, so the `localVmSeen` precondition is deterministic. The Jac
+  `container_computer.jac` fixture boundary honors `OMB_TEST_VM_STATE`;
+  the eval child inherits the pinned Jac binary and shared runtime cache.
+- `lazy-computer-claim` waits for the gate to become unheld after the
+  "Computer free" event; that event precedes completion of the lazy claim.
+- `roomSpeakerTurnIds` fences `handleRuntimeEvent`: a late completion still
+  folds its transcript and usage, but cannot release the replacement speaker's
+  room ownership or VM lease.
+- Verified: `jac check`, server TypeScript typecheck, the three lazy-claim
+  behavior evals, and the Local VM late-room-completion regression.
 
 ### B4. Truth in docs and dead code
 - AGENTS.md §7: openai-compat derivatives are **not** registered in Jac;
@@ -572,8 +578,18 @@ on a disposable machine/VM, not on the shared dev box.
   because the node server ships until H.)
 
 ### B6. Pre-existing routine failures
-- The 3 routine `index.test.ts` failures that predate the webhooks port;
-  root-cause each now that the test harness boots Jac.
+- The asynchronous `startTurn` dispatch error arrived after the routine bridge
+  had already returned `{ok:true}`, so Jac never transitioned/notified the
+  failed run. The callback now queues `routines.detached.failThread`; the
+  existing Jac failure transition emits the single routine-failed event.
+- `/api/local-computer/interrupt` interrupted every direct thread before
+  cancelling its active routine. Provider teardown could report failure first.
+  It now cancels the routine before interrupting other direct work and excludes
+  that routine thread from the second interrupt pass, preserving `cancelled`.
+- The wake-hold test passes with TS and Jac drivers on the current pin without
+  a code change; no failure was reproducible.
+- Verified: the three targeted `index.test.ts` cases pass with both default TS
+  drivers and `OMB_JAC_DRIVERS=all`.
 
 ### B7. Retarget evals and verification at the Jac app
 - `evals/runners` boot the node server; golden replay (C3/D1 acceptance),
@@ -1307,12 +1323,12 @@ Profiling findings are tracked as #9959 (per-request Postgres setup —
 | A6 | Platform policy | decided: no Electron fallback; Windows via upstream PRs | product | |
 | — | All §17 decisions | resolved 2026-10-10 | | |
 | U1 | Upstream Windows (+ Intel macOS) desktop support | planned after F2 | | |
-| B1 | e2e fixture env | not started | | |
-| B2 | Windows/mac CI shards | not started | | |
-| B3 | Computer-claim regressions + room race | not started | | |
-| B4 | Docs truth + dead code | partial (AGENTS §7 corrected) | | |
-| B5 | Static serving audit | not started | | |
-| B6 | Pre-existing routine failures | not started | | |
+| B1 | e2e fixture env | done: shared Jac binary/cache/socket env helper used by spawned fixture servers and `control-omb`; TypeScript + targeted Vitest verified | | |
+| B2 | Windows/mac CI shards | done: Jac-backed suites skip through `jacAvailable()` when the binary is absent; CI writes per-shard skipped-test counts to the step summary; no-Jac Vitest smoke + workflow contract tests pass | | |
+| B3 | Computer-claim regressions + room race | done: Jac VM fixture seam + deterministic pre-existing VM setup; late room completion fenced by speaker turn id; all three behavior evals and room VM regression pass | | |
+| B4 | Docs truth + dead code | done: Jac driver docs corrected; obsolete catalog/preset and computer-observation code/tests removed; TS CUA duplication recorded for F | | |
+| B5 | Static serving audit | done: traversal validation uses resolved path containment; encoded traversal regression covered | | |
+| B6 | Pre-existing routine failures | done: async dispatch failure now calls Jac failThread; emergency interruption cancels the run before provider teardown; the wake-hold baseline failure did not reproduce on the current pin; all three targeted cases pass with TS and Jac drivers | | |
 | C0, C1 | Router, auth + security | not started | | |
 | C2-model | Graph schema (aliases) + read-only endpoints | not started | | |
 | C2a | Importer (receipts, idempotent) | not started | | |
@@ -1320,7 +1336,7 @@ Profiling findings are tracked as #9959 (per-request Postgres setup —
 | C3.1–C3.5 | Event feed+fold (+C2-cutover), direct turns, rooms, queues, watchdog/recovery | not started | | |
 | C4–C14 | Remaining server core | not started (M1–M4 ports exist as sidecar subsystems) | | |
 | C15 | Re-home M1–M4 subsystems onto the graph | not started | | |
-| B7, B8 | Evals retarget; Windows CI for sv | not started | | |
+| B7, B8 | Evals retarget; Windows CI for sv | B7 not started; B8 done: Windows sv import policy enforced with a visible skipped-check summary until a Windows Jac binary exists | | |
 | U2 | Upstream PRs #9959, #9944, #9946 | not started | | |
 | X1–X4 | Cross-cutting | not started | | |
 | D1 | Jac drivers default (claude, codex, openai-compat) | blocked on C3 | | |

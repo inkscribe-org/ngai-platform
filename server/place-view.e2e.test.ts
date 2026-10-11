@@ -13,7 +13,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { freePortBlock } from "./testing/ports.ts";
-import { jacFixtureEnv } from "./testing/fixture-env.ts";
+import { jacAvailable, jacFixtureEnv } from "./testing/fixture-env.ts";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
@@ -25,7 +25,7 @@ const HOURS = refusal(429, "limit_reached", "Your Pro plan's 50 cloud computer h
 const AT_ONCE = refusal(429, "limit_reached", "Your Personal plan includes 1 cloud computer at once. Delete one to start another.");
 const DOWN = refusal(503, "service_unavailable", "Cloud computers are temporarily unavailable. Try again later.");
 
-describe("a cloud computer that can't start, against the real server", () => {
+describe.skipIf(!jacAvailable())("a cloud computer that can't start, against the real server", () => {
   let home = "";
   let data = "";
   let ui = "";

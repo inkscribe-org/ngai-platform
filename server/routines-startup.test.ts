@@ -4,11 +4,12 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 
-import { jacHarnessAvailable, launchVerificationServer, resolveJacBinary, runControlOmb } from "../scripts/control-omb.ts";
+import { launchVerificationServer, resolveJacBinary, runControlOmb } from "../scripts/control-omb.ts";
 import type { RoutineRun } from "./routines.ts";
+import { jacAvailable } from "./testing/fixture-env.ts";
 import { waitForExit } from "./testing/cleanup.ts";
 
-const itJac = it.skipIf(!jacHarnessAvailable());
+const itJac = it.skipIf(!jacAvailable());
 itJac("recovers queued/due work without resurrecting an interrupted routine after restart", async () => {
   const fixture = await launchVerificationServer();
   const { url, dataDir, logPath } = fixture.info;

@@ -25,7 +25,7 @@ import { z } from "zod";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 import { startFakeHttpMcp } from "./testing/fake-http-mcp-server.ts";
 import { startFakeOAuth } from "./testing/fake-oauth-server.ts";
-import { jacFixtureEnv } from "./testing/fixture-env.ts";
+import { jacAvailable, jacFixtureEnv } from "./testing/fixture-env.ts";
 import { freePortBlock } from "./testing/ports.ts";
 import { openSse } from "./testing/sse.ts";
 import { FILE_MAX_BYTES, IMAGE_MAX_BYTES } from "./attachments.ts";
@@ -1840,7 +1840,7 @@ describe("harness HTTP API", () => {
     }
   });
 
-  it("protects a team-goal lead and pauses the routine when its room is deleted", async () => {
+  it.skipIf(!jacAvailable())("protects a team-goal lead and pauses the routine when its room is deleted", async () => {
     const [lead, other] = await Promise.all([api("POST", "/api/bots"), api("POST", "/api/bots")]).then(
       (created) => created.map((response) => response.body.bot),
     );
@@ -5727,7 +5727,7 @@ describe("harness HTTP API", () => {
     }
   });
 
-  it("installs a complete bot package with a Chief, room, playbook, connector intent, and paused routine", async () => {
+  it.skipIf(!jacAvailable())("installs a complete bot package with a Chief, room, playbook, connector intent, and paused routine", async () => {
     const packageFile = {
       format: "openmaus.package",
       version: 1,
@@ -6712,7 +6712,7 @@ describe("harness HTTP API", () => {
     expectStoppedTestServerCleanly(isolatedChild, isolatedStderr);
   }, 45_000);
 
-  it("reports a failed routine once, not twice", async () => {
+  it.skipIf(!jacAvailable())("reports a failed routine once, not twice", async () => {
     // A routine reaches the same dispatch catch as an interactive turn and
     // then reports through onDispatchError, which raises routine-failed.
     // Without the interactive guard the person would be buzzed twice for one
@@ -8824,7 +8824,7 @@ describe("harness HTTP API", () => {
     }
   });
 
-  it("refuses to delete a bot while one of its routines is active", async () => {
+  it.skipIf(!jacAvailable())("refuses to delete a bot while one of its routines is active", async () => {
     const bot = (await api("POST", "/api/bots", {
       modelSelection: { instanceId: "claude", model: "claude-sonnet-5" },
       requireAvailableModel: true,
@@ -8861,7 +8861,7 @@ describe("harness HTTP API", () => {
     }
   });
 
-  it("stops a local bot's exact channel and routine work through the emergency endpoint", async () => {
+  it.skipIf(!jacAvailable())("stops a local bot's exact channel and routine work through the emergency endpoint", async () => {
     const bot = (await api("POST", "/api/bots", {
       modelSelection: { instanceId: "claude", model: "claude-sonnet-5" },
       requireAvailableModel: true,
@@ -9905,7 +9905,7 @@ describe("harness HTTP API", () => {
     }
   });
 
-  it("keeps chat-created routines inert until their durable card is confirmed", async () => {
+  it.skipIf(!jacAvailable())("keeps chat-created routines inert until their durable card is confirmed", async () => {
     const bot = (await api("POST", "/api/bots", {})).body.bot;
     let routineId = "";
     let orphanRoutineId = "";
@@ -10344,7 +10344,7 @@ describe("harness HTTP API", () => {
     }
   });
 
-  it("gates targeted routine actions like creation and re-checks the target at confirm", async () => {
+  it.skipIf(!jacAvailable())("gates targeted routine actions like creation and re-checks the target at confirm", async () => {
     const chief = (await api("POST", "/api/bots", { name: "Acting chief" })).body.bot;
     let teammateId = "";
     let outsiderId = "";
@@ -11476,7 +11476,7 @@ describe("harness HTTP API", () => {
     expect(after.body.profile).toEqual({ name: "Ada Lovelace", email: "Ada@Example.com", aboutMe: "" });
   });
 
-  it("creates an independent webhook, accepts a delivery, deduplicates it, and rotates its secret", async () => {
+  it.skipIf(!jacAvailable())("creates an independent webhook, accepts a delivery, deduplicates it, and rotates its secret", async () => {
     const bots = await api("GET", "/api/bots");
     const created = await api("POST", "/api/webhooks", {
       name: "Incoming build",
@@ -12014,7 +12014,7 @@ describe("bot memory API", () => {
     }
   });
 
-  it("tells the desktop whether to hold the computer awake for a routine due within the hour", async () => {
+  it.skipIf(!jacAvailable())("tells the desktop whether to hold the computer awake for a routine due within the hour", async () => {
     const bot = (await api("POST", "/api/bots", {})).body.bot;
     let routineId: string | null = null;
     try {
@@ -12036,7 +12036,7 @@ describe("bot memory API", () => {
     }
   });
 
-  it("marks every unseen routine failure seen through one client endpoint", async () => {
+  it.skipIf(!jacAvailable())("marks every unseen routine failure seen through one client endpoint", async () => {
     const bot = (await api("POST", "/api/bots", {})).body.bot;
     let missedRoutineId: string | null = null;
     let failingRoutineId: string | null = null;

@@ -15,7 +15,7 @@ import { request as httpRequest } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { afterAll, beforeAll, expect, it } from "vitest";
+import { afterAll, beforeAll, expect, it as vitestIt } from "vitest";
 import { createCloudMove, mintOwnerCode } from "../electron/cloud-move.mjs";
 import { cloudPairingSignature } from "./cloud-home.ts";
 import { RESTART_EXIT_CODE } from "./restart.ts";
@@ -24,8 +24,9 @@ import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 // this process both run the operator's pinned jac with its runtime cache.
 import { stageWorkspaceBackup } from "./jac-workspace-backup.ts";
 import { stopJacHarness, useOperatorJac } from "./testing/jac-harness.ts";
-import { jacFixtureEnv } from "./testing/fixture-env.ts";
+import { jacAvailable, jacFixtureEnv } from "./testing/fixture-env.ts";
 import { freePortBlock } from "./testing/ports.ts";
+const it = vitestIt.skipIf(!jacAvailable());
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 useOperatorJac();
@@ -237,6 +238,7 @@ function filesUnder(root: string): string[] {
 }
 
 beforeAll(async () => {
+  if (!jacAvailable()) return;
   scratch = mkdtempSync(join(tmpdir(), "omb-move-scratch-"));
   [source, cloud, server] = await Promise.all([launch("desktop"), launch("cloud"), launch("server")]);
   // The desktop window's own session on the Cloud, from Connect to my Cloud.
@@ -273,6 +275,7 @@ beforeAll(async () => {
 }, 90_000);
 
 afterAll(async () => {
+  if (!jacAvailable()) return;
   stopJacHarness();
   for (const fixture of [source, cloud, server]) {
     if (!fixture) continue;

@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it } from "vitest";
+import { jacAvailable } from "./testing/fixture-env.ts";
 import { launchVerificationServer, runControlOmb } from "../scripts/control-omb.ts";
 import { request } from "../scripts/mcp-server.ts";
 import { removeTempDir } from "./testing/cleanup.ts";
@@ -767,7 +768,7 @@ it("parks a message behind outstanding teammate work when the bot opts in, then 
 // An automation turn is not the person cancelling either: a delegated
 // (routine-driven) turn lands in the same conversation and leaves the
 // outstanding assignment alone.
-it("does not cancel a live coordination when an automation turn lands in the conversation", () => fixture(async f => {
+it.skipIf(!jacAvailable())("does not cancel a live coordination when an automation turn lands in the conversation", () => fixture(async f => {
   const ops = (await f.cli("new-bot", "--name", "Ops", "--section", "Leadership")).bot;
   f.plan[f.lead.id] = { delayMs: 6000, reply: "CSV export implemented" };
   f.plan[f.chief.id] = { turns: [

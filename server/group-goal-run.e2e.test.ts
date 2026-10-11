@@ -7,9 +7,10 @@ import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
-import { jacFixtureEnv } from "./testing/fixture-env.ts";
+import { jacAvailable, jacFixtureEnv } from "./testing/fixture-env.ts";
 import { freePortBlock } from "./testing/ports.ts";
 
+const describeJac = describe.skipIf(!jacAvailable());
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(SERVER_DIR, "..");
 const FAKE_CLAUDE = join(SERVER_DIR, "testing", "fake-claude-cli.ts");
@@ -50,6 +51,7 @@ const api = async (method: string, path: string, body?: unknown): Promise<{ stat
 };
 
 beforeAll(async () => {
+  if (!jacAvailable()) return;
   home = mkdtempSync(join(tmpdir(), "omb-goal-run-"));
   stopScopedWorkerFinishGate = join(home, "stop-scoped-worker-finish");
   busyWorkerFinishGate = join(home, "busy-worker-finish");
@@ -228,11 +230,12 @@ beforeAll(async () => {
 }, 30_000);
 
 afterAll(async () => {
+  if (!jacAvailable()) return;
   if (child) await waitForExit(child, { signal: "SIGTERM" });
   if (home) await removeTempDir(home);
 });
 
-describe("goal-driven channel runs", () => {
+describeJac("goal-driven channel runs", () => {
   it("returns to the lead until the goal is completed and appends a clean receipt", async () => {
     const lead = (await api("POST", "/api/bots", {
       name: "Lead",

@@ -1,7 +1,8 @@
 import { expect, it } from "vitest";
+import { jacAvailable } from "./testing/fixture-env.ts";
 import { launchVerificationServer } from "../scripts/control-omb.ts";
 
-it("applies independent creation templates through the real isolated HTTP routes", async () => {
+it.skipIf(!jacAvailable())("applies independent creation templates through the real isolated HTTP routes", async () => {
   const fixture = await launchVerificationServer();
   const api = async (method: string, path: string, body?: unknown, status = 200) => {
     const response = await fetch(`${fixture.info.url}${path}`, {

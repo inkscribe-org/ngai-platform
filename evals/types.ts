@@ -82,7 +82,7 @@ export const stepSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("setVmState"), state: z.record(z.string(), z.unknown()) }),
   z.object({ kind: z.literal("consumeDump"), timeoutMs: z.number().optional() }),
   z.object({ kind: z.literal("captureComputer"), bot: z.string() }),
-  z.object({ kind: z.literal("pollComputerGate"), bot: z.string(), saveAs: z.string() }),
+  z.object({ kind: z.literal("pollComputerGate"), bot: z.string(), saveAs: z.string(), waitUntilUnheld: z.boolean().optional(), timeoutMs: z.number().optional() }),
 ]);
 
 export const assertionSchema = z.discriminatedUnion("kind", [

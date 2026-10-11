@@ -92,7 +92,9 @@
     {
       "kind": "pollComputerGate",
       "bot": "auto",
-      "saveAs": "afterRelease"
+      "saveAs": "afterRelease",
+      "waitUntilUnheld": true,
+      "timeoutMs": 20000
     },
     {
       "kind": "writeGate",
