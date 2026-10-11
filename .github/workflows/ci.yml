@@ -196,22 +196,22 @@ jobs:
         # a fresh checkout's mtimes would miss a restored cache every time.
         run: find jac/harness -exec touch -h -d '2000-01-01T00:00:00Z' {} +
       - id: key
-        run: echo "key=jac-harness-${{ runner.os }}-0.37.21-${{ hashFiles('jac/harness/**/*.jac', 'jac/harness/jac.toml') }}" >> "$GITHUB_OUTPUT"
+        run: echo "key=jac-harness-${{ runner.os }}-0.37.25-${{ hashFiles('jac/harness/**/*.jac', 'jac/harness/jac.toml') }}" >> "$GITHUB_OUTPUT"
       - id: cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: jac/harness/.jac
           key: ${{ steps.key.outputs.key }}
           # A partial hit still reuses every unchanged module's compile.
-          restore-keys: jac-harness-${{ runner.os }}-0.37.21-
+          restore-keys: jac-harness-${{ runner.os }}-0.37.25-
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         if: steps.cache.outputs.cache-hit != 'true'
         with:
           node-version: 24
-      - name: Install jac 0.37.21
+      - name: Install jac 0.37.25
         if: steps.cache.outputs.cache-hit != 'true'
         run: |
-          curl -fsSL https://raw.githubusercontent.com/jaseci-labs/jaseci/main/scripts/install.sh | bash -s -- --version 0.37.21
+          curl -fsSL https://raw.githubusercontent.com/jaseci-labs/jaseci/main/scripts/install.sh | bash -s -- --version 0.37.25
           jac --version
       - name: Compile the harness
         if: steps.cache.outputs.cache-hit != 'true'
@@ -256,6 +256,41 @@ jobs:
       - name: Cron parity probe
         working-directory: jac/harness/conformance
         run: JAC_SPAWN=1 node cron-probe.mjs
+
+  jac-windows:
+    # WS-B8: keep the sv (jac) sources Windows-clean continuously. No Windows
+    # jac binary exists upstream yet (#9943 — we author it in WS-U1), so the
+    # real `jac check`/`jac test` gates are skipped with a visible counter and
+    # the portable subset is enforced here: sv modules must not import
+    # POSIX-only stdlib modules (process trees already branch on os.name —
+    # driver_claude._stop_tree runs taskkill on nt). When U1 lands, replace
+    # the counter step with jac check + jac test on this runner.
+    needs: static
+    if: needs.static.outputs.runtime == 'true'
+    name: jac sv Windows-cleanliness
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: POSIX-only imports in sv modules
+        shell: bash
+        run: |
+          hits=$(grep -RIlE '^[[:space:]]*import (fcntl|termios|pwd|grp|pty|resource|pipes)\b' jac/harness --include='*.jac' | grep -v '/\.jac/' || true)
+          if [ -n "$hits" ]; then
+            echo "::error::POSIX-only module imports in sv code (breaks Windows; WS-B8/U1): $hits"
+            exit 1
+          fi
+      - name: Report the skipped jac gates
+        shell: bash
+        run: |
+          {
+            echo "## Jac on Windows"
+            echo "- \`jac check\` on sv modules: **skipped** (0 run)"
+            echo "- \`jac test\` on sv modules: **skipped** (0 run)"
+            echo "No Windows jac binary exists upstream (#9943); we author it in WS-U1"
+            echo "(docs/plans/2026-10-10-jac-implementation-plan.md §13b). This job"
+            echo "enforces the portable subset and keeps the gap visible until then."
+          } >> "$GITHUB_STEP_SUMMARY"
 
   packaged-server:
     needs: static
@@ -334,7 +369,7 @@ jobs:
   gate:
     # One aggregation, not three queued runners doing the same check.
     name: CI
-    needs: [static, jac-warm, vitest, behavior-evals, jac-conformance, packaged-server, windows-cua, electron-smokes]
+    needs: [static, jac-warm, vitest, behavior-evals, jac-conformance, jac-windows, packaged-server, windows-cua, electron-smokes]
     # Still report failed/skipped dependencies, but don't keep a superseded
     # workflow alive just to schedule its summary jobs.
     if: ${{ !cancelled() }}
