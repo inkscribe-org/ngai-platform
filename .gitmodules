@@ -1,3 +1,4 @@
 [submodule "third_party/jac"]
 	path = third_party/jac
-	url = https://github.com/jaseci-labs/jac
+	url = https://github.com/chess10kp/jaseci
+	branch = fix/desktop-serving-app-has-server
