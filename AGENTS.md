@@ -35,10 +35,11 @@ Learned during the phase-0 spike (`jac/spike/`); keep updated as we hit more:
 
 - Toolchain: `jac` binary via jacup (`~/.local/share/jacup/versions/`); what
   runs is the release pinned by `jac/harness/jac.toml` (`jac-version`), not a
-  submodule build — to run patched compiler code, build it and point
-  `OMB_JAC_BIN` at the binary. Source of record is the `third_party/jac`
-  submodule, pinned to fork branches of `chess10kp/jaseci`; all compiler
-  patches land there (§3). Upstream `jaseci-labs/jac` is not a target.
+  submodule build — to run patched compiler code, build the fork on `mac-llm`
+  (§11) and point `OMB_JAC_BIN` at the binary. Source of record is the
+  `third_party/jac` submodule, pinned to fork branches of `chess10kp/jaseci`;
+  all compiler patches land there (§3). Upstream `jaseci-labs/jac` is not a
+  target.
 - `jac.toml`: `kind = "service"` + `entry-point` makes `jac run` serve HTTP;
   `walker:pub` → `POST /walker/<name>`, `def:pub` → `POST /function/<name>`.
   A walker/def returning a generator or async generator is auto-wrapped as SSE
@@ -311,4 +312,30 @@ end state is one jac-desktop app (no node, no Electron); phases A–H with
 per-workstream scope, acceptance and dependencies; the upstream
 jaseci-labs/jac issues that gate the desktop shell (§14). New work ports
 to the end-state shape — no new bridge ops or mirrors (plan §0).
+
+## 11. Compiler builds + expensive runs go to `mac-llm`
+
+Use the `mac-llm` SSH host (macOS 26.6, Apple Silicon, 18 cores, ~750GB
+free) for anything compute-heavy around the compiler — fork builds, the
+compiler test suite, cold compiles, benchmarks — instead of the
+workstation.
+
+- Toolchain: Zig **0.16.0** exactly (the version is pinned upstream; other
+  majors fail to build) at `~/tools/zig-aarch64-macos-0.16.0/zig`. Xcode
+  CLT provides make/perl. No brew needed.
+- Source: fork clone at `~/repos/jac-fork` (`chess10kp/jaseci`). Before a
+  build, fetch and reset to the commit the `third_party/jac` pin names:
+  `git -C ~/repos/jac-fork fetch && git -C ~/repos/jac-fork checkout <pin>`.
+- Build: `cd ~/repos/jac-fork/jac && ~/tools/zig-aarch64-macos-0.16.0/zig
+  build` → self-contained release binary at `jac/zig-out/bin/jac` (bundles
+  CPython from source; first build downloads pinned archives and is slow,
+  later builds are incremental). Smoke with
+  `jac/zig-out/bin/jac --version` + a hello-world `jac run`.
+- Other targets cross-compile from the Mac with `-Dtarget=` (e.g.
+  `-Dtarget=x86_64-linux`) when a Linux fork binary is needed.
+- Tests: the binary ships pytest + xdist — run the compiler suite in-repo
+  with `JAC_TEST_JOBS=auto <binary> test`, on the Mac, not locally.
+- Long jobs: launch through ssh with output redirected to a log on the Mac
+  (`... > /tmp/build.log 2>&1`) so a dropped connection never kills a
+  build.
 
