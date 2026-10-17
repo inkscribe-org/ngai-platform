@@ -35,8 +35,8 @@ Learned during the phase-0 spike (`jac/spike/`); keep updated as we hit more:
 
 - Toolchain: `jac` binary via jacup (`~/.local/share/jacup/versions/`); what
   runs is the release pinned by `jac/harness/jac.toml` (`jac-version`), not a
-  submodule build — to run patched compiler code, build the fork on `mac-llm`
-  (§11) and point `OMB_JAC_BIN` at the binary. Source of record is the
+  submodule build. To run patched compiler code, build the fork for the target
+  host (§11) and set `OMB_JAC_BIN` to that binary. Source of record is the
   `third_party/jac` submodule, pinned to fork branches of `chess10kp/jaseci`;
   all compiler patches land there (§3). Upstream `jaseci-labs/jac` is not a
   target.
@@ -313,31 +313,54 @@ per-workstream scope, acceptance and dependencies; the upstream
 jaseci-labs/jac issues that gate the desktop shell (§14). New work ports
 to the end-state shape — no new bridge ops or mirrors (plan §0).
 
-## 11. Compiler builds + expensive runs go to `mac-llm`
+## 11. Compiler builds + expensive runs
 
-Use the `mac-llm` SSH host (macOS 26.6, Apple Silicon, 18 cores, ~750GB
-free) for anything compute-heavy around the compiler — fork builds, the
-compiler test suite, cold compiles, benchmarks — instead of the
-workstation.
+Do not build or run the compiler test suite on the workstation; it lacks
+enough RAM. Use `mac-llm` (macOS 26.6, Apple Silicon, 18 cores, ~750GB free)
+for native macOS fork builds, the compiler test suite, cold compiles, and
+benchmarks.
 
-- Toolchain: Zig **0.16.0** exactly (the version is pinned upstream; other
-  majors fail to build) at `~/tools/zig-aarch64-macos-0.16.0/zig`. Xcode
-  CLT provides make/perl. No brew needed.
+**Build for the workstation (Linux x86_64):** the compiler's
+`jac/bootstrap/build_python.zig` requires the build host OS/architecture to
+match the target. macOS cannot build the Linux CPython payload; a macOS
+`zig build -Dtarget=x86_64-linux-gnu.2.17` fails before compilation. Build
+the Linux binary on a Linux x86_64 host instead. Use the release target
+`x86_64-linux-gnu.2.17` (the fork CI's glibc floor).
+
+1. Build from the exact fork commit pinned by `third_party/jac`, not
+   `jaseci-labs/jac`. `clarity2` is the available Linux x86_64 SSH builder.
+2. Use Zig **0.16.0**. The Linux build needs `zstd` on `PATH` (fork CI
+   installs it); on a shared host without admin rights, download and extract
+   the package locally with `apt-get download zstd && dpkg-deb -x
+   zstd_*.deb .tools/zstd`, then prepend `.tools/zstd/usr/bin` to `PATH`.
+   In the fork's `jac/` directory, fetch the target LLVM shim and build:
+   ```
+   zig build fetch-llvm -Dtarget=x86_64-linux-gnu.2.17
+   zig build -j4 -Dtarget=x86_64-linux-gnu.2.17
+   ```
+3. Copy the built `jac/zig-out/bin/jac` from the Linux builder to
+   `~/.local/share/jac-fork/bin/jac` on the workstation (create the directory
+   and preserve executable permissions). Keep it outside
+   `~/.local/share/jacup/versions/`.
+4. Select the fork binary for app processes:
+   `export OMB_JAC_BIN="$HOME/.local/share/jac-fork/bin/jac"`. The resolver
+   in `server/jac-binary.ts` gives this explicit override priority over jacup.
+5. Smoke with `"$OMB_JAC_BIN" --version` and a hello-world
+   `"$OMB_JAC_BIN" run /path/to/hello.jac` on the workstation.
+
+**On `mac-llm`:**
+
+- Toolchain: Zig **0.16.0** exactly at
+  `~/tools/zig-aarch64-macos-0.16.0/zig`. Xcode CLT provides make/perl.
 - Source: fork clone at `~/repos/jac-fork` (`chess10kp/jaseci`). Before a
   build, fetch and reset to the commit the `third_party/jac` pin names:
   `git -C ~/repos/jac-fork fetch && git -C ~/repos/jac-fork checkout <pin>`.
-- Build: `cd ~/repos/jac-fork/jac && ~/tools/zig-aarch64-macos-0.16.0/zig
-  build` → self-contained release binary at `jac/zig-out/bin/jac` (bundles
-  CPython from source; first build downloads pinned archives and is slow,
-  later builds are incremental). One-time prerequisite before the first
-  build: `zig build fetch-llvm` (the payload step fails with
-  "no LLVM shim (--shim)" without it). Smoke with
-  `jac/zig-out/bin/jac --version` + a hello-world `jac run`.
-- Other targets cross-compile from the Mac with `-Dtarget=` (e.g.
-  `-Dtarget=x86_64-linux`) when a Linux fork binary is needed.
-- Tests: the binary ships pytest + xdist — run the compiler suite in-repo
-  with `JAC_TEST_JOBS=auto <binary> test`, on the Mac, not locally.
+- Native build: from `~/repos/jac-fork/jac`, run
+  `~/tools/zig-aarch64-macos-0.16.0/zig build`. One-time prerequisite before
+  the first build: `zig build fetch-llvm` (the payload step fails with
+  "no LLVM shim (--shim)" without it). Smoke with `jac --version` and a
+  hello-world `jac run`.
+- Tests: run the compiler suite in-repo with
+  `JAC_TEST_JOBS=auto <binary> test`, on the Mac, not the workstation.
 - Long jobs: launch through ssh with output redirected to a log on the Mac
-  (`... > /tmp/build.log 2>&1`) so a dropped connection never kills a
-  build.
-
+  (`... > /tmp/build.log 2>&1`) so a dropped connection never kills a build.
