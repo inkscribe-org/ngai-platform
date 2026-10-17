@@ -329,7 +329,9 @@ workstation.
 - Build: `cd ~/repos/jac-fork/jac && ~/tools/zig-aarch64-macos-0.16.0/zig
   build` → self-contained release binary at `jac/zig-out/bin/jac` (bundles
   CPython from source; first build downloads pinned archives and is slow,
-  later builds are incremental). Smoke with
+  later builds are incremental). One-time prerequisite before the first
+  build: `zig build fetch-llvm` (the payload step fails with
+  "no LLVM shim (--shim)" without it). Smoke with
   `jac/zig-out/bin/jac --version` + a hello-world `jac run`.
 - Other targets cross-compile from the Mac with `-Dtarget=` (e.g.
   `-Dtarget=x86_64-linux`) when a Linux fork binary is needed.
